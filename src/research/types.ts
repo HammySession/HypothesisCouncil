@@ -149,9 +149,20 @@ export interface RunResearchInput {
   markdownOnly?: boolean;
 }
 
+export interface PlannedProviderCalls {
+  generation: number;
+  review: number;
+  falsification: number;
+  total: number;
+}
+
 export interface ResearchRunPreview {
   goal: string;
   providers: string[];
+  minProviders: number;
+  hypothesesPerProvider: number;
+  topK: number;
+  plannedCalls: PlannedProviderCalls;
   contextManifest: ContextManifest;
   contextBudget: ContextBudgetPlan;
   contextRoot: string;
@@ -165,6 +176,12 @@ export interface ResearchProgress {
   completed: number;
   total: number;
   message: string;
+  /**
+   * The unit of work this event describes: a provider name during preflight and generation, or a
+   * candidate id during review and falsification. Reviewer identities are never exposed here.
+   */
+  subject?: string;
+  event?: 'started' | 'finished';
 }
 
 export type ResearchProgressHandler = (progress: ResearchProgress) => void | Promise<void>;

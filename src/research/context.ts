@@ -129,9 +129,14 @@ function sha256(value: Buffer | string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+/**
+ * Manifest paths are repository-relative and always use `/` separators so packets, reports, and
+ * session JSON are identical across operating systems.
+ */
 function displayPath(path: string, cwd: string): string {
   const local = relative(cwd, path);
-  return local && local !== '..' && !local.startsWith(`..${sep}`) ? local : path;
+  const shown = local && local !== '..' && !local.startsWith(`..${sep}`) ? local : path;
+  return shown.split(sep).join('/');
 }
 
 function isDenied(path: string): boolean {

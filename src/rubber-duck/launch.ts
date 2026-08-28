@@ -1,7 +1,8 @@
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { createRequire } from 'module';
 import { homedir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 
 export interface RubberDuckLaunch {
   command: string;
@@ -21,10 +22,7 @@ export interface RubberDuckLaunchOptions {
 const require = createRequire(import.meta.url);
 const DEFAULT_STDIN_PROCESS_TIMEOUT_MS = 5 * 60 * 1000;
 
-function processTimeout(
-  environment: Record<string, string>,
-  name: 'CLAUDE' | 'CODEX'
-): string {
+function processTimeout(environment: Record<string, string>, name: 'CLAUDE' | 'CODEX'): string {
   return (
     environment[`CLI_${name}_PROCESS_TIMEOUT`] ||
     environment.HYPOTHESIS_COUNCIL_PROVIDER_TIMEOUT_MS ||
@@ -36,6 +34,34 @@ export function definedEnvironment(environment: NodeJS.ProcessEnv): Record<strin
   return Object.fromEntries(
     Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined)
   );
+}
+
+/** Absolute path of the built stdin shim that sits beside this module. */
+export function resolveStdinShimPath(): string {
+  return fileURLToPath(new URL('./stdin-shim.js', import.meta.url));
+}
+
+/** Version of the Rubber Duck package that is actually installed, if it can be determined. */
+export function installedRubberDuckVersion(
+  resolveModule: (specifier: string) => string = (specifier) => require.resolve(specifier)
+): string | undefined {
+  try {
+    let directory = dirname(resolveModule('mcp-rubber-duck'));
+    for (let depth = 0; depth < 4; depth++) {
+      const manifest = join(directory, 'package.json');
+      if (existsSync(manifest)) {
+        const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as {
+          name?: string;
+          version?: string;
+        };
+        if (parsed.name === 'mcp-rubber-duck' && parsed.version) return parsed.version;
+      }
+      directory = dirname(directory);
+    }
+  } catch {
+    // Fall through: the package is missing or its manifest is unreadable.
+  }
+  return undefined;
 }
 
 function configuredCodexModel(environment: NodeJS.ProcessEnv): string | undefined {
@@ -92,6 +118,9 @@ export function rubberDuckEnvironment(
   if (environment.CLI_CLAUDE_DEFAULT_MODEL) {
     claudeArgs.push('--model', environment.CLI_CLAUDE_DEFAULT_MODEL);
   }
+  // Disable Claude Code's built-in tools and ignore user MCP servers so the council prompt is
+  // answered directly instead of spending the turn budget on tool calls.
+  claudeArgs.push('--strict-mcp-config', '--tools', '');
   moveDefaultPresetToStdin(environment, 'CLAUDE', {
     COMMAND: 'claude',
     PROMPT_DELIVERY: 'stdin',

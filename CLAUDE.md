@@ -8,6 +8,11 @@
   package. Use its public MCP tools; do not import package internals.
 - `src/runtime.ts` owns the lifetime of session-scoped Rubber Duck subprocesses.
 - `src/cli/` and `src/server.ts` are presentation adapters over the shared research service.
+  Council presets (`src/cli/presets.ts`) and `hc doctor` are CLI concerns; they configure
+  Rubber Duck through its public environment variables only.
+- `src/rubber-duck/stdin-shim.ts` is a vendor-CLI wrapper Rubber Duck launches for CLIs that
+  cannot read a prompt from stdin; it must stay dependency-free and testable through
+  `stdin-shim-core.ts` with fake commands.
 
 ## Conventions
 
@@ -21,7 +26,10 @@
 ## Merge gate
 
 ```bash
-npm run typecheck && npm run lint && npm test -- --runInBand && npm run build
+npm run check   # = npm run typecheck && npm run lint && npm test -- --runInBand && npm run build
 ```
+
+Two package-contract tests are skipped on Windows by design (fake `codex`/`claude` scripts cannot
+shadow the real executables there); everything else must pass on every platform.
 
 Do not commit without user approval.

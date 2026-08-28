@@ -3,6 +3,15 @@ import type { ContextBudgetPlan, ProviderContextLimit, ProviderDescriptor } from
 const BYTES_PER_TOKEN = 3;
 const PROMPT_OVERHEAD_TOKENS = 8_192;
 const ARGUMENT_TRANSPORT_LIMIT_BYTES = 96 * 1024;
+// Windows CreateProcess caps the whole command line at 32,767 UTF-16 code units. The packet must
+// leave room for the generation prompt framing, the CLI's own arguments, and quote escaping.
+const WINDOWS_ARGUMENT_TRANSPORT_LIMIT_BYTES = 24 * 1024;
+
+export function argumentTransportLimitBytes(platform: NodeJS.Platform = process.platform): number {
+  return platform === 'win32'
+    ? WINDOWS_ARGUMENT_TRANSPORT_LIMIT_BYTES
+    : ARGUMENT_TRANSPORT_LIMIT_BYTES;
+}
 
 interface ModelLimit {
   contextWindowTokens: number;
@@ -64,7 +73,11 @@ function configuredLimit(
   };
 }
 
-function usesArgumentTransport(
+/**
+ * Whether a CLI provider receives the prompt as a command-line argument, which is subject to the
+ * operating system's argument-length cap, instead of through stdin.
+ */
+export function usesArgumentTransport(
   provider: ProviderDescriptor,
   environment: NodeJS.ProcessEnv
 ): boolean {
@@ -87,8 +100,10 @@ export function calculateContextBudget(
   providers: ProviderDescriptor[],
   selectedProviders: string[],
   requestedMaxBytes?: number,
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
 ): ContextBudgetPlan {
+  const transportLimitBytes = argumentTransportLimitBytes(platform);
   if (
     requestedMaxBytes !== undefined &&
     (!Number.isInteger(requestedMaxBytes) || requestedMaxBytes <= 0)
@@ -112,13 +127,13 @@ export function calculateContextBudget(
     );
     const modelBytes = usableTokens * BYTES_PER_TOKEN;
     const transportLimited =
-      usesArgumentTransport(provider, environment) && modelBytes > ARGUMENT_TRANSPORT_LIMIT_BYTES;
+      usesArgumentTransport(provider, environment) && modelBytes > transportLimitBytes;
     return {
       provider: name,
       model: provider.model,
       contextWindowTokens: configured.limit.contextWindowTokens,
       reservedOutputTokens: configured.limit.reservedOutputTokens,
-      maxContextBytes: transportLimited ? ARGUMENT_TRANSPORT_LIMIT_BYTES : modelBytes,
+      maxContextBytes: transportLimited ? transportLimitBytes : modelBytes,
       source: configured.source,
       transportLimited,
     };

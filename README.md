@@ -15,7 +15,8 @@ tools.
 The current implementation provides:
 
 - an interactive rubber-duck shell and scriptable commands;
-- foreground research runs with visible progress;
+- `hc doctor` and ready-made council presets for setup without hand-written environment;
+- foreground research runs with a live progress line, a dry-run mode, and an end-of-run summary;
 - explicit, bounded shared context packets with common secret paths denied;
 - independent multi-provider generation with a sealed generation barrier;
 - tolerant JSON extraction and one repair attempt;
@@ -39,18 +40,41 @@ npm run build
 npm link
 ```
 
-Configure providers through exported environment variables or
-`~/.mcp-rubber-duck/config.json`. For example:
+Vendor CLIs (`claude`, `codex`, `grok`, `agy`, ...) must already be installed and authenticated.
+Then check what the council can see:
 
 ```bash
-export CLI_CLAUDE_ENABLED=true
-export CLI_CODEX_ENABLED=true
-export CLI_GEMINI_ENABLED=true
-export CLI_GROK_ENABLED=true
+hc doctor                    # providers, models, context windows, prompt transport, CLIs on PATH
+hc doctor --probe            # also send a one-line prompt to every provider and time the reply
+hc presets                   # ready-made councils
+hc doctor --preset frontier  # check a preset before spending a run on it
 ```
 
-Vendor CLIs must already be installed and authenticated. Rubber Duck also supports HTTP and custom
-providers through its normal configuration.
+`hc doctor` exits non-zero when it finds a problem, so it can gate scripts.
+
+## Quick start
+
+```bash
+cd /path/to/your-repository
+hc run --preset quick --dry-run          # preview context, budget, and planned calls; sends nothing
+hc run --preset quick --yes              # two-provider council over the current repository
+hc run --preset frontier --markdown-only --yes --out ./HYPOTHESES.md
+```
+
+A preset configures providers, models, reasoning effort, timeouts, and prompt transport in the
+current process before Rubber Duck starts; nothing is written to your shell profile or to
+`~/.mcp-rubber-duck/config.json`. Explicit flags such as `--providers` and `--min-providers`
+override the preset's defaults, and `HYPOTHESIS_COUNCIL_PROVIDER_TIMEOUT_MS` is respected.
+
+| Preset     | Council                                                                              |
+| ---------- | ------------------------------------------------------------------------------------ |
+| `frontier` | Grok 4.6 (xhigh), Gemini 3.1 Pro High via AGY, Claude Fable 5 (1M), GPT-5.6 Sol (xhigh); all four required |
+| `quick`    | Claude Code and Codex with their default models                                       |
+
+Providers can still be configured by hand through exported environment variables or
+`~/.mcp-rubber-duck/config.json`, for example `export CLI_CLAUDE_ENABLED=true`. Rubber Duck also
+supports HTTP and custom providers through its normal configuration; `hc doctor` shows whatever it
+finds.
 
 ## Interactive use
 
@@ -59,15 +83,17 @@ npm run cli
 ```
 
 ```text
-home> /run Why does validation improve while deployment performance degrades?
+home> /preset frontier
+home · frontier> /run Why does validation improve while deployment performance degrades?
 RC-...> /status
 RC-...> /candidates
-RC-...> /show H-001
+RC-...> /show 1
 RC-...> Which experiment best separates H-001 from H-003?
 RC-...> /report
 ```
 
-Plain text is conversational. Council work starts only through an explicit command.
+Plain text is conversational. Council work starts only through an explicit command. Command
+history persists across shells in `<session home>/shell-history`.
 
 ## Scriptable use
 
@@ -81,21 +107,29 @@ hc run "Find likely sources of training/serving skew" \
   --repo /path/to/stock_embeddings \
   --yes
 
-# Send only Markdown and MDX files.
-hc run --repo /path/to/stock_embeddings --markdown-only --yes
+# Send only Markdown and MDX files, and copy the report next to the code.
+hc run --repo /path/to/stock_embeddings --markdown-only --yes --out ./HYPOTHESES.md
 
 hc status
 hc candidates
-hc show H-001
+hc show H-001            # H1 and 1 work too
 hc ask "Which evidence would most change the ranking?"
-hc report
+hc report                # --json for the JSON report, --out PATH to copy it
 ```
 
 `hc run` uses the current directory as repository context and supplies a useful default research
 goal when none is written. `--context PATH` can be repeated to narrow the repository selection;
 paths are resolved relative to `--repo`. Context is sent to external model providers. The CLI
-previews included, omitted, and denied paths; asks for confirmation in a terminal; and requires
-`--yes` when stdin is not interactive.
+previews included, omitted, and denied paths together with the planned number of provider calls;
+asks for confirmation in a terminal; and requires `--yes` when stdin is not interactive.
+`--dry-run` prints the same preview and exits without creating a session. `--json` prints the
+public session snapshot instead of the summary.
+
+While a run is in progress the terminal shows one live line per stage with the providers (during
+generation) or candidate ids (during review and falsification) still in flight and the elapsed
+time; set `HYPOTHESIS_COUNCIL_PLAIN_PROGRESS=true` for plain line-per-event output. When the run
+finishes the CLI prints the top candidates with their review verdicts, the report path, and
+suggested next commands.
 
 The context budget is automatic. Each selected provider gets the same sealed packet, so the packet
 uses the smallest usable model window in the council after reserving prompt and output tokens.
@@ -111,39 +145,39 @@ export HYPOTHESIS_COUNCIL_CONTEXT_TOKENS_CLI_CODEX=1050000
 Large repositories receive a deterministic path manifest and fair per-file excerpts before spare
 capacity is allocated to high-priority project instructions, root metadata, documentation, source,
 and tests. Common credential paths, symlinks, generated directories, and local settings files are
-denied, but the preview remains the final privacy check.
+denied, but the preview remains the final privacy check. Manifest paths always use `/`
+separators, so session artifacts are identical across operating systems.
 
-### Stock embeddings four-model preset
+### Prompt transport and the stdin shim
 
-The checked-in runner configures Grok 4.6 at `xhigh`, Gemini 3.1 Pro High through AGY, Claude
-Fable 5, and GPT-5.6 Sol at `xhigh`. It requires all four providers and sends only Markdown/MDX
-context from the sibling `stock_embeddings` repository:
+A vendor CLI that only accepts the prompt as a command-line argument caps the shared packet at the
+operating system's argument limit: 96 KiB on Linux and macOS, and 24 KiB on Windows, where
+`CreateProcess` caps the whole command line at 32,767 characters. The wrapper adapts the default
+Rubber Duck Codex and Claude presets to stdin automatically. For CLIs without a stdin prompt
+option the `frontier` preset launches a small shim (`dist/rubber-duck/stdin-shim.js`) that
+receives the prompt from Rubber Duck over stdin and forwards it through a transport the CLI does
+support: a temporary `--prompt-file` for Grok, and a `stream-json` message for AGY. The prompt
+file is written with owner-only permissions inside the session directory and removed as soon as
+the CLI exits. `hc doctor` reports each provider's transport and the resulting cap.
+
+### Stock embeddings four-model run
 
 ```bash
 npm run build
-npm run stock:markdown
-```
-
-Review the context preview and confirm it, or pass `--yes` for a non-interactive run:
-
-```bash
 npm run stock:markdown -- --yes
 ```
 
-If the repository is elsewhere, override its location without editing the script:
+The runner applies the `frontier` preset and sends only Markdown/MDX context from the sibling
+`stock_embeddings` repository. It runs the same way from PowerShell, cmd, and POSIX shells. If the
+repository is elsewhere, point at it without editing the script:
 
 ```bash
-STOCK_EMBEDDINGS_REPO=/absolute/path/to/stock_embeddings \
-  npm run stock:markdown
+STOCK_EMBEDDINGS_REPO=/absolute/path/to/stock_embeddings npm run stock:markdown
 ```
 
-The script checks that `agy`, `claude`, `codex`, and `grok` are installed. AGY must already be
-authenticated, and Grok requires `grok login`. Each provider subprocess has a 15-minute timeout;
-the MCP request layer adds one minute of shutdown headroom so high-effort Codex and Grok calls are
-not cut off by Rubber Duck's shorter custom-provider default. Because AGY and Grok currently accept the full
-prompt through a command-line flag, their transport-safe limit constrains the shared council packet
-to 96 KiB. Every eligible Markdown file is represented when framing permits, but larger files are
-deterministically excerpted to fit that shared limit.
+Each provider subprocess has a 15-minute timeout; the MCP request layer adds one minute of shutdown
+headroom so high-effort Codex and Grok calls are not cut off by Rubber Duck's shorter
+custom-provider default.
 
 Sessions default to `~/.mcp-rubber-duck/hypothesis-council`. Override this with
 `HYPOTHESIS_COUNCIL_HOME`.
@@ -158,9 +192,16 @@ The `hypothesis-council-mcp` binary exposes the project tools over stdio:
 - `duck_hypothesis_ask`
 
 It is a separate MCP server that launches the installed Rubber Duck server internally when a tool
-needs a model provider.
+needs a model provider. Presets are a CLI feature; configure providers for the MCP server through
+Rubber Duck's environment variables or config file.
 
 ## Development
+
+```bash
+npm run check   # typecheck, lint, tests, build: the merge gate
+```
+
+or the individual steps:
 
 ```bash
 npm run typecheck
@@ -169,7 +210,10 @@ npm test -- --runInBand
 npm run build
 ```
 
-Tests use fake clients and in-memory MCP transports. They never call live model providers.
+Tests use fake clients and in-memory MCP transports. They never call live model providers. Two
+package-contract tests that shadow the real `codex` and `claude` executables with fake scripts are
+skipped on Windows, where Rubber Duck's shell-less spawn cannot be intercepted that way; the
+custom-provider contract test still runs the real package there.
 
 See [the reviewed Slice 1 design](./docs/hypothesis-council.md),
 [the MCP tool surface](./docs/tools.md), and
@@ -182,9 +226,8 @@ See [the reviewed Slice 1 design](./docs/hypothesis-council.md),
 - Model review is structured debate, not independent experimental validation.
 - Review aggregates are prioritization signals, not probabilities of truth.
 - Runs are foreground-owned; exiting interrupts work instead of pretending a daemon exists.
-- The wrapper adapts the default Rubber Duck 1.20.5 Codex and Claude CLI presets to stdin so large
-  packets do not overflow the operating system's argument limit. Explicit CLI argument overrides
-  are preserved and may therefore receive a smaller transport-safe budget.
+- Explicit Rubber Duck CLI argument overrides are preserved and may therefore receive a smaller
+  transport-safe budget than the presets.
 - Cancelling closes the session-scoped Rubber Duck MCP subprocess. Rubber Duck 1.20.5 does not
   guarantee termination of an already-spawned vendor CLI grandchild; it may continue until its
   configured provider timeout.

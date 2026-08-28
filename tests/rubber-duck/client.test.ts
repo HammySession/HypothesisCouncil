@@ -114,6 +114,19 @@ describe('McpRubberDuckClient', () => {
     });
   });
 
+  it('strips the envelope when the model name itself contains brackets', async () => {
+    const peer = new FakePeer();
+    peer.toolResult = {
+      content: [
+        { type: 'text', text: '🦆 [CLAUDE Agent | claude-fable-5[1m]]: READY\n\n⏱️ Latency: 10ms' },
+      ],
+    };
+
+    await expect(new McpRubberDuckClient(peer).ask('cli-claude', 'Reply READY')).resolves.toEqual(
+      { content: 'READY', model: 'claude-fable-5[1m]' }
+    );
+  });
+
   it('turns MCP tool errors into exceptions', async () => {
     const peer = new FakePeer();
     peer.toolResult = { isError: true, content: [{ type: 'text', text: 'provider failed' }] };

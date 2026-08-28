@@ -48,19 +48,40 @@ describe('calculateContextBudget', () => {
       [provider('cli-gemini', 'gemini-pro', 'cli')],
       ['cli-gemini'],
       undefined,
-      { CLI_GEMINI_ENABLED: 'true' }
+      { CLI_GEMINI_ENABLED: 'true' },
+      'linux'
     );
     const stdinPlan = calculateContextBudget(
       [provider('cli-codex', 'gpt-5.6-sol', 'cli')],
       ['cli-codex'],
       undefined,
-      { CLI_CODEX_ENABLED: 'true' }
+      { CLI_CODEX_ENABLED: 'true' },
+      'linux'
     );
 
     expect(argumentPlan.providerLimits[0].transportLimited).toBe(true);
     expect(argumentPlan.maxBytes).toBe(96 * 1024);
     expect(stdinPlan.providerLimits[0].transportLimited).toBe(false);
     expect(stdinPlan.maxBytes).toBeGreaterThan(2_000_000);
+  });
+
+  it('uses the smaller Windows command-line limit for argument-based CLI providers', () => {
+    const windowsPlan = calculateContextBudget(
+      [provider('cli-grok', 'grok-4.6', 'cli'), provider('cli-codex', 'gpt-5.5', 'cli')],
+      ['cli-grok', 'cli-codex'],
+      undefined,
+      { CLI_CUSTOM_GROK_PROMPT_DELIVERY: 'flag', CLI_CODEX_ENABLED: 'true' },
+      'win32'
+    );
+
+    expect(windowsPlan.limitingProvider).toBe('cli-grok');
+    expect(windowsPlan.maxBytes).toBe(24 * 1024);
+    expect(windowsPlan.providerLimits.find((limit) => limit.provider === 'cli-grok')).toMatchObject(
+      { transportLimited: true, maxContextBytes: 24 * 1024 }
+    );
+    expect(
+      windowsPlan.providerLimits.find((limit) => limit.provider === 'cli-codex')?.transportLimited
+    ).toBe(false);
   });
 
   it('rejects malformed context-window overrides', () => {

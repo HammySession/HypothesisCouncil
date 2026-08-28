@@ -1,4 +1,4 @@
-import { buildContextPacket } from './context.js';
+import { buildContextPacket, type BuiltContext } from './context.js';
 import { calculateContextBudget } from './context-budget.js';
 import { deduplicateCandidates } from './dedup.js';
 import { assignReviewers } from './assignment.js';
@@ -28,17 +28,36 @@ import type {
   HypothesisCandidate,
   HypothesisFalsification,
   HypothesisReview,
+  PlannedProviderCalls,
   ProviderCallRecord,
   ResearchCompletion,
+  ResearchProgress,
   ResearchProgressHandler,
   ResearchProviderGateway,
   ResearchRunApproval,
+  ResearchRunPreview,
   ResearchSession,
   RunResearchInput,
 } from './types.js';
 
 const DEFAULT_HYPOTHESES_PER_PROVIDER = 3;
 const DEFAULT_TOP_K = 3;
+
+/**
+ * Upper bound on model calls for a run before repairs and blank-reply retries: one generation per
+ * provider, one review per raw candidate (deduplication can only lower this), and one falsification
+ * per finalist.
+ */
+export function planProviderCalls(
+  providerCount: number,
+  hypothesesPerProvider: number,
+  topK: number
+): PlannedProviderCalls {
+  const generation = providerCount;
+  const review = providerCount * hypothesesPerProvider;
+  const falsification = Math.min(topK, review);
+  return { generation, review, falsification, total: generation + review + falsification };
+}
 
 interface CallSpec {
   id: string;
@@ -55,69 +74,45 @@ export class HypothesisCouncilService {
     readonly store: ResearchSessionStore
   ) {}
 
+  /**
+   * Resolve providers, size the shared context, and build the packet without creating a session.
+   * This is what `hc run --dry-run` shows; it sends nothing to a model provider.
+   */
+  async preview(input: RunResearchInput, signal?: AbortSignal): Promise<ResearchRunPreview> {
+    const prepared = await this.prepare(input, this.store.sessionDirectory('preview'), signal);
+    return prepared.preview;
+  }
+
   async run(
     input: RunResearchInput,
     progress?: ResearchProgressHandler,
     signal?: AbortSignal,
     approve?: ResearchRunApproval
   ): Promise<ResearchSession> {
-    if (!input.goal.trim()) throw new Error('A research goal is required');
     const sessionId = this.store.createId();
     const workingDirectory = this.store.sessionDirectory(sessionId);
-    const descriptors = await this.gateway.listProviders(workingDirectory, signal);
-    const defaultProviders = descriptors.filter((provider) => provider.type === 'cli');
-    const requestedProviders = [
-      ...new Set(
-        input.providers?.length
-          ? input.providers
-          : (defaultProviders.length > 0 ? defaultProviders : descriptors).map(
-              (provider) => provider.name
-            )
-      ),
-    ].sort();
-    if (requestedProviders.length === 0) throw new Error('No Rubber Duck providers are configured');
-
-    const minProviders = input.minProviders ?? Math.min(2, requestedProviders.length);
-    const contextBudget = calculateContextBudget(
-      descriptors,
-      requestedProviders,
-      input.maxContextBytes
-    );
-    const contextRoot = input.contextRoot || process.cwd();
-    const context = buildContextPacket(
-      input.contextPaths || [],
-      contextBudget.maxBytes,
-      contextRoot,
-      { markdownOnly: input.markdownOnly }
-    );
-    await approve?.({
-      goal: input.goal.trim(),
-      providers: requestedProviders,
-      contextManifest: context.manifest,
-      contextBudget,
-      contextRoot,
-      markdownOnly: input.markdownOnly === true,
-    });
+    const { preview, context } = await this.prepare(input, workingDirectory, signal);
+    await approve?.(preview);
     const now = new Date().toISOString();
     const session: ResearchSession = {
       version: 1,
       id: sessionId,
-      goal: input.goal.trim(),
+      goal: preview.goal,
       status: 'running',
       stage: 'created',
       createdAt: now,
       updatedAt: now,
       config: {
-        providers: requestedProviders,
-        hypothesesPerProvider: input.hypothesesPerProvider || DEFAULT_HYPOTHESES_PER_PROVIDER,
-        topK: input.topK || DEFAULT_TOP_K,
-        minProviders,
+        providers: preview.providers,
+        hypothesesPerProvider: preview.hypothesesPerProvider,
+        topK: preview.topK,
+        minProviders: preview.minProviders,
         seed: input.seed ?? 42,
-        maxContextBytes: contextBudget.maxBytes,
+        maxContextBytes: preview.contextBudget.maxBytes,
         contextPaths: input.contextPaths || [],
-        contextRoot,
-        markdownOnly: input.markdownOnly === true,
-        contextBudget,
+        contextRoot: preview.contextRoot,
+        markdownOnly: preview.markdownOnly,
+        contextBudget: preview.contextBudget,
       },
       providers: [],
       unavailableProviders: [],
@@ -128,12 +123,12 @@ export class HypothesisCouncilService {
       calls: [],
       warnings: [],
     };
-    if (requestedProviders.length === 1) {
+    if (preview.providers.length === 1) {
       session.warnings.push(
         'Single-provider mode: reviews cannot provide independent authorship separation.'
       );
     }
-    const assumedLimits = contextBudget.providerLimits
+    const assumedLimits = preview.contextBudget.providerLimits
       .filter((limit) => limit.source === 'provider-default')
       .map((limit) => limit.provider);
     if (assumedLimits.length > 0) {
@@ -141,7 +136,7 @@ export class HypothesisCouncilService {
         `Context limits use conservative provider defaults for: ${assumedLimits.join(', ')}. Configure per-provider token overrides when needed.`
       );
     }
-    const transportLimits = contextBudget.providerLimits
+    const transportLimits = preview.contextBudget.providerLimits
       .filter((limit) => limit.transportLimited)
       .map((limit) => limit.provider);
     if (transportLimits.length > 0) {
@@ -157,6 +152,54 @@ export class HypothesisCouncilService {
       JSON.stringify(context.manifest, null, 2)
     );
     return this.execute(session, context.packet, progress, signal);
+  }
+
+  private async prepare(
+    input: RunResearchInput,
+    workingDirectory: string,
+    signal?: AbortSignal
+  ): Promise<{ preview: ResearchRunPreview; context: BuiltContext }> {
+    const goal = input.goal.trim();
+    if (!goal) throw new Error('A research goal is required');
+    const descriptors = await this.gateway.listProviders(workingDirectory, signal);
+    const defaultProviders = descriptors.filter((provider) => provider.type === 'cli');
+    const providers = [
+      ...new Set(
+        input.providers?.length
+          ? input.providers
+          : (defaultProviders.length > 0 ? defaultProviders : descriptors).map(
+              (provider) => provider.name
+            )
+      ),
+    ].sort();
+    if (providers.length === 0) throw new Error('No Rubber Duck providers are configured');
+
+    const minProviders = input.minProviders ?? Math.min(2, providers.length);
+    const hypothesesPerProvider = input.hypothesesPerProvider || DEFAULT_HYPOTHESES_PER_PROVIDER;
+    const topK = input.topK || DEFAULT_TOP_K;
+    const contextBudget = calculateContextBudget(descriptors, providers, input.maxContextBytes);
+    const contextRoot = input.contextRoot || process.cwd();
+    const context = buildContextPacket(
+      input.contextPaths || [],
+      contextBudget.maxBytes,
+      contextRoot,
+      { markdownOnly: input.markdownOnly }
+    );
+    return {
+      context,
+      preview: {
+        goal,
+        providers,
+        minProviders,
+        hypothesesPerProvider,
+        topK,
+        plannedCalls: planProviderCalls(providers.length, hypothesesPerProvider, topK),
+        contextManifest: context.manifest,
+        contextBudget,
+        contextRoot,
+        markdownOnly: input.markdownOnly === true,
+      },
+    };
   }
 
   async resume(
@@ -272,6 +315,10 @@ export class HypothesisCouncilService {
     let completed = 0;
     const results = await Promise.all(
       requested.map(async (provider) => {
+        await this.emit(progress, session.stage, completed, requested.length, `${provider}`, {
+          subject: provider,
+          event: 'started',
+        });
         const healthy =
           known.has(provider) &&
           (await this.gateway
@@ -283,7 +330,8 @@ export class HypothesisCouncilService {
           session.stage,
           completed,
           requested.length,
-          `${provider}: ${healthy ? 'ready' : 'unavailable'}`
+          `${provider}: ${healthy ? 'ready' : 'unavailable'}`,
+          { subject: provider, event: 'finished' }
         );
         return { provider, healthy };
       })
@@ -319,22 +367,28 @@ export class HypothesisCouncilService {
     let completed = 0;
     const initial = await Promise.all(
       session.providers.map(async (provider) => {
+        await this.emit(
+          progress,
+          session.stage,
+          completed,
+          session.providers.length,
+          `${provider} generating`,
+          { subject: provider, event: 'started' }
+        );
         try {
-          return {
-            provider,
-            completion: await this.invoke(
-              session,
-              {
-                id: `generation-${provider}`,
-                stage: 'generation',
-                provider,
-                subject: 'all',
-                promptVersion: PROMPT_VERSIONS.generation,
-                prompt,
-              },
-              signal
-            ),
-          };
+          const { completion, callId } = await this.invokeWithBlankRetry(
+            session,
+            {
+              id: `generation-${provider}`,
+              stage: 'generation',
+              provider,
+              subject: 'all',
+              promptVersion: PROMPT_VERSIONS.generation,
+              prompt,
+            },
+            signal
+          );
+          return { provider, completion, callId };
         } catch (error) {
           return { provider, error };
         } finally {
@@ -344,7 +398,8 @@ export class HypothesisCouncilService {
             session.stage,
             completed,
             session.providers.length,
-            `Generation ${completed}/${session.providers.length}; candidates sealed`
+            `Generation ${completed}/${session.providers.length}; candidates sealed`,
+            { subject: provider, event: 'finished' }
           );
         }
       })
@@ -361,7 +416,7 @@ export class HypothesisCouncilService {
         continue;
       }
       let completion = result.completion;
-      let callId = `generation-${result.provider}`;
+      let callId = result.callId;
       try {
         let parsed: GenerationOutput;
         try {
@@ -448,12 +503,19 @@ export class HypothesisCouncilService {
       pending.map(async (candidate) => {
         const reviewer = assignments.get(candidate.id);
         if (!reviewer) return;
+        await this.emit(
+          progress,
+          session.stage,
+          completed,
+          distinct.length,
+          `Reviewing ${candidate.id}`,
+          { subject: candidate.id, event: 'started' }
+        );
         try {
-          let callId = `review-${candidate.id}-${reviewer}`;
-          let completion = await this.invoke(
+          let { completion, callId } = await this.invokeWithBlankRetry(
             session,
             {
-              id: callId,
+              id: `review-${candidate.id}-${reviewer}`,
               stage: 'review',
               provider: reviewer,
               subject: candidate.id,
@@ -504,7 +566,8 @@ export class HypothesisCouncilService {
             session.stage,
             completed,
             distinct.length,
-            `Reviewed ${completed}/${distinct.length}`
+            `Reviewed ${completed}/${distinct.length}`,
+            { subject: candidate.id, event: 'finished' }
           );
         }
       })
@@ -531,12 +594,19 @@ export class HypothesisCouncilService {
       pending.map(async (candidate) => {
         const reviewer = assignments.get(candidate.id);
         if (!reviewer) return;
+        await this.emit(
+          progress,
+          session.stage,
+          completed,
+          finalists.length,
+          `Attacking ${candidate.id}`,
+          { subject: candidate.id, event: 'started' }
+        );
         try {
-          let callId = `falsification-${candidate.id}-${reviewer}`;
-          let completion = await this.invoke(
+          let { completion, callId } = await this.invokeWithBlankRetry(
             session,
             {
-              id: callId,
+              id: `falsification-${candidate.id}-${reviewer}`,
               stage: 'falsification',
               provider: reviewer,
               subject: candidate.id,
@@ -589,11 +659,28 @@ export class HypothesisCouncilService {
             session.stage,
             completed,
             finalists.length,
-            `Falsified ${completed}/${finalists.length} finalists`
+            `Falsified ${completed}/${finalists.length} finalists`,
+            { subject: candidate.id, event: 'finished' }
           );
         }
       })
     );
+  }
+
+  private async invokeWithBlankRetry(
+    session: ResearchSession,
+    spec: CallSpec,
+    signal?: AbortSignal
+  ): Promise<{ completion: ResearchCompletion; callId: string }> {
+    let completion = await this.invoke(session, spec, signal);
+    if (completion.content.trim()) return { completion, callId: spec.id };
+    // A blank reply is a transport or provider hiccup, not an answer. Re-issue the same sealed
+    // prompt once; nothing from another provider is involved.
+    session.warnings.push(`Empty ${spec.stage} response from ${spec.provider}; retried once`);
+    const callId = spec.id.replace(/^([^-]+)-/, '$1-retry-');
+    completion = await this.invoke(session, { ...spec, id: callId }, signal);
+    if (!completion.content.trim()) throw new Error('Empty response after retry');
+    return { completion, callId };
   }
 
   private async invoke(
@@ -675,8 +762,9 @@ export class HypothesisCouncilService {
     stage: ResearchSession['stage'],
     completed: number,
     total: number,
-    message: string
+    message: string,
+    details: Pick<ResearchProgress, 'subject' | 'event'> = {}
   ): Promise<void> {
-    await progress?.({ stage, completed, total, message });
+    await progress?.({ stage, completed, total, message, ...details });
   }
 }

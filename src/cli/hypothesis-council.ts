@@ -1,16 +1,34 @@
 #!/usr/bin/env node
 
-import { lstatSync, readFileSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { dirname, join, resolve } from 'path';
 import { createInterface } from 'readline';
 import { ResearchSessionStore } from '../research/store.js';
 import { publicCandidateRecord, publicSessionSnapshot } from '../research/report.js';
 import { createCouncilRuntime, withCouncilRuntime } from '../runtime.js';
-import type {
-  HypothesisCandidate,
-  ResearchProgress,
-  ResearchRunPreview,
-  ResearchSession,
-} from '../research/types.js';
+import { installedRubberDuckVersion } from '../rubber-duck/launch.js';
+import type { ResearchRunPreview, ResearchSession } from '../research/types.js';
+import { doctorText, runDoctor } from './doctor.js';
+import {
+  candidateText,
+  candidatesText,
+  errorHints,
+  normalizeCandidateId,
+  orderedCandidates,
+  runPreviewLines,
+  runSummaryText,
+  stageLabel,
+  statusText,
+} from './format.js';
+import { loadShellHistory, rememberShellLine, saveShellHistory } from './history.js';
+import {
+  applyPreset,
+  findPreset,
+  missingPresetCommands,
+  presetsText,
+  type CouncilPreset,
+} from './presets.js';
+import { createProgressRenderer, type ProgressRenderer } from './progress.js';
 import { createRunInput } from './run-options.js';
 
 interface ParsedArguments {
@@ -18,9 +36,22 @@ interface ParsedArguments {
   flags: Map<string, string[]>;
 }
 
+interface RunOutcome {
+  session: ResearchSession;
+  elapsedMs: number;
+}
+
 const out = (value = '') => process.stdout.write(`${value}\n`);
 const err = (value: string) => process.stderr.write(`${value}\n`);
-const BOOLEAN_FLAGS = new Set(['--allow-single', '--help', '--json', '--markdown-only', '--yes']);
+const BOOLEAN_FLAGS = new Set([
+  '--allow-single',
+  '--dry-run',
+  '--help',
+  '--json',
+  '--markdown-only',
+  '--probe',
+  '--yes',
+]);
 
 function parseArguments(args: string[]): ParsedArguments {
   const positionals: string[] = [];
@@ -57,112 +88,31 @@ function numberFlag(parsed: ParsedArguments, name: string): number | undefined {
   return result;
 }
 
-function stageLabel(session: ResearchSession): string {
-  if (session.status === 'failed') return 'NEEDS ATTENTION';
-  if (session.status === 'interrupted') return 'INTERRUPTED';
-  if (session.status === 'completed') return 'COMPLETE';
-  return session.stage.toUpperCase();
+function pathFlag(parsed: ParsedArguments, name: string): string | undefined {
+  const value = flag(parsed, name);
+  if (value === 'true') throw new Error(`${name} requires a path`);
+  return value;
 }
 
-function statusText(session: ResearchSession): string {
-  const distinct = session.candidates.filter((candidate) => candidate.status === 'distinct').length;
-  const packetBytes = session.contextManifest.packetBytes ?? session.contextManifest.includedBytes;
-  const lines = [
-    `${session.id}  ${stageLabel(session)}`,
-    `Goal: ${session.goal}`,
-    `Providers: ${session.providers.length}/${session.config.providers.length} ready`,
-    `Context: ${formatBytes(packetBytes)}/${formatBytes(session.config.maxContextBytes)}${session.config.markdownOnly ? ' · Markdown only' : ''}`,
-    `Candidates: ${session.candidates.length} raw | ${distinct} distinct | ${session.reviews.length} reviewed | ${session.falsifications.length} falsified`,
-  ];
-  if (session.stage === 'generating' && session.candidates.length === 0) {
-    lines.push('Candidates are sealed until independent generation completes.');
-  }
-  if (session.reportMarkdownPath) lines.push(`Report: ${session.reportMarkdownPath}`);
-  if (session.error) lines.push(`Error: ${session.error}`);
-  return lines.join('\n');
-}
-
-function orderedCandidates(session: ResearchSession): HypothesisCandidate[] {
-  return session.candidates
-    .filter((candidate) => candidate.status === 'distinct')
-    .sort((left, right) => (left.rank || 999) - (right.rank || 999));
-}
-
-function candidatesText(session: ResearchSession): string {
-  if (session.candidates.length === 0) {
-    return 'Candidates are sealed until independent generation completes.';
-  }
-  const rows = orderedCandidates(session).map((candidate) => {
-    const rank = candidate.rank ? `${candidate.rank}.` : '—';
-    const score = candidate.score === undefined ? 'pending' : candidate.score.toFixed(2);
-    return `${rank.padEnd(4)} ${candidate.id.padEnd(6)} ${candidate.title}  [review ${score}]`;
+function progressRenderer(): ProgressRenderer {
+  const live =
+    process.stderr.isTTY === true && process.env.HYPOTHESIS_COUNCIL_PLAIN_PROGRESS !== 'true';
+  return createProgressRenderer({
+    write: (text) => void process.stderr.write(text),
+    live,
+    columns: process.stderr.columns,
   });
-  return [`Candidates for ${session.id}`, ...rows].join('\n');
-}
-
-function candidateText(session: ResearchSession, candidateId: string): string {
-  const candidate = session.candidates.find((item) => item.id === candidateId);
-  if (!candidate) throw new Error(`Candidate not found: ${candidateId}`);
-  const review = session.reviews.find((item) => item.hypothesisId === candidate.id);
-  const attack = session.falsifications.find((item) => item.hypothesisId === candidate.id);
-  return [
-    `${candidate.id} — ${candidate.title}`,
-    `Status: ${candidate.status}${candidate.duplicateOf ? ` of ${candidate.duplicateOf}` : ''}`,
-    `Claim: ${candidate.claim}`,
-    `Mechanism: ${candidate.mechanism}`,
-    `Predictions: ${candidate.predictions.join('; ')}`,
-    `Assumptions: ${candidate.assumptions.join('; ') || 'None recorded'}`,
-    `Falsifier: ${candidate.falsifier}`,
-    `Minimal experiment: ${candidate.minimalExperiment}`,
-    `Review: ${review?.verdict || 'pending'}${review ? ` — ${review.strongestObjection}` : ''}`,
-    `Adversarial attack: ${attack?.competingExplanation || 'not selected/pending'}`,
-  ].join('\n');
-}
-
-function printProgress(progress: ResearchProgress): void {
-  const fraction = progress.total > 0 ? ` ${progress.completed}/${progress.total}` : '';
-  err(`[${progress.stage}]${fraction} ${progress.message}`);
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
 function printRunPreview(preview: ResearchRunPreview): void {
-  const manifest = preview.contextManifest;
-  const limit = preview.contextBudget.providerLimits.find(
-    (provider) => provider.provider === preview.contextBudget.limitingProvider
-  );
-  err(`Repository: ${preview.contextRoot}`);
-  err(`Providers: ${preview.providers.join(', ')}`);
-  err(
-    `Context mode: ${preview.markdownOnly ? 'Markdown files only' : 'supported text and code files'}`
-  );
-  err(
-    `Shared context budget: ${formatBytes(preview.contextBudget.maxBytes)}; limited by ${preview.contextBudget.limitingProvider}${limit ? ` (${limit.model}, ${limit.contextWindowTokens.toLocaleString()} tokens${limit.transportLimited ? ', argument transport' : ''})` : ''}`
-  );
-  err(
-    `Context preview: ${manifest.files.length} files contribute ${formatBytes(manifest.includedBytes)}; packet ${formatBytes(manifest.packetBytes)}/${formatBytes(manifest.maxBytes)}; denied ${manifest.deniedPaths.length}; omitted ${manifest.omittedPaths.length}`
-  );
-  for (const file of manifest.files.slice(0, 20)) {
-    err(
-      `  include ${file.path}${file.truncated ? ` (${formatBytes(file.includedBytes)} excerpt)` : ''}`
-    );
-  }
-  if (manifest.files.length > 20)
-    err(`  ...     ${manifest.files.length - 20} more included files`);
-  for (const path of manifest.deniedPaths.slice(0, 20)) err(`  deny    ${path}`);
-  if (manifest.deniedPaths.length > 20)
-    err(`  ...     ${manifest.deniedPaths.length - 20} more denied paths`);
+  for (const line of runPreviewLines(preview)) err(line);
 }
 
 async function confirmRun(preview: ResearchRunPreview): Promise<void> {
   printRunPreview(preview);
   if (!process.stdin.isTTY || !process.stderr.isTTY) {
     throw new Error(
-      'Repository context is sent to external providers. Re-run with --yes after reviewing the preview.'
+      'Repository context is sent to external providers. Re-run with --yes after reviewing the preview, or use --dry-run to inspect it.'
     );
   }
   const confirmation = createInterface({ input: process.stdin, output: process.stderr });
@@ -173,24 +123,71 @@ async function confirmRun(preview: ResearchRunPreview): Promise<void> {
   if (!/^y(?:es)?$/i.test(answer.trim())) throw new Error('Run cancelled');
 }
 
+/**
+ * Apply `--preset NAME` to the process environment before any Rubber Duck subprocess starts.
+ * With `strict`, missing vendor CLIs abort early instead of failing minutes later in preflight.
+ */
+function selectPreset(parsed: ParsedArguments, strict: boolean): CouncilPreset | undefined {
+  const name = flag(parsed, '--preset');
+  if (name === undefined) return undefined;
+  if (name === 'true') throw new Error('--preset requires a name; run `hc presets` to list them');
+  const preset = findPreset(name);
+  const missing = missingPresetCommands(preset);
+  if (strict && missing.length > 0) {
+    throw new Error(
+      `Preset ${preset.name} needs these commands on PATH: ${missing.join(', ')}. Run \`hc doctor --preset ${preset.name}\` for details.`
+    );
+  }
+  applyPreset(preset, process.env);
+  return preset;
+}
+
+function resolveOutputPath(target: string, defaultName: string): string {
+  const absolute = resolve(target);
+  const isDirectory =
+    /[\\/]$/.test(target) || (existsSync(absolute) && statSync(absolute).isDirectory());
+  return isDirectory ? join(absolute, defaultName) : absolute;
+}
+
+function copyReport(session: ResearchSession, target: string, json = false): string {
+  const source = json ? session.reportJsonPath : session.reportMarkdownPath;
+  if (!source) throw new Error(`Report is not ready for ${session.id}`);
+  const path = resolveOutputPath(target, `${session.id}.${json ? 'json' : 'md'}`);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, readFileSync(source, 'utf8'));
+  return path;
+}
+
+function reportText(session: ResearchSession, json: boolean): string {
+  const source = json ? session.reportJsonPath : session.reportMarkdownPath;
+  if (!source) throw new Error(`Report is not ready for ${session.id}`);
+  return readFileSync(source, 'utf8').trimEnd();
+}
+
 function helpText(): string {
   return `Hypothesis Council
 
 Usage:
   hc                                         Start the interactive shell
+  hc doctor [--probe] [--preset NAME] [--json]
+                                             Check providers, models, transports, and CLIs
+  hc presets                                 List ready-made council presets
   hc run                                     Analyze the current repository
   hc run "<goal>" [--repo PATH] [--context PATH]... [--markdown-only] [--yes]
-  hc run [--providers a,b] [--min-providers N] [--max-context-bytes N]
-  hypothesis-council status [SESSION] [--json]
-  hypothesis-council candidates [SESSION] [--json]
-  hypothesis-council show H-001 [--session SESSION] [--json]
-  hypothesis-council ask [SESSION] "<question>" [--provider NAME]
-  hypothesis-council resume [SESSION]
-  hypothesis-council report [SESSION]
-  hypothesis-council sessions [--json]
+  hc run [--preset NAME] [--providers a,b] [--min-providers N] [--max-context-bytes N]
+  hc run [--dry-run] [--out PATH] [--json]   Preview only / copy the report / machine output
+  hc status [SESSION] [--json]
+  hc candidates [SESSION] [--json]
+  hc show H-001 [--session SESSION] [--json] (H1 and 1 are accepted too)
+  hc ask [SESSION] "<question>" [--provider NAME]
+  hc resume [SESSION]
+  hc report [SESSION] [--json] [--out PATH]
+  hc sessions [--json]
 
 Interactive commands:
   /run [goal]       Start a foreground council run for the current repository
+  /preset NAME      Use a council preset for later /run commands
+  /doctor           Check provider configuration
   /status           View current progress
   /candidates       List visible candidates
   /show H-001       Inspect a candidate and its criticism
@@ -208,27 +205,27 @@ Plain text asks the selected duck a question. When a session is selected, answer
 async function runCommand(
   parsed: ParsedArguments,
   store: ResearchSessionStore,
-  interactive = false,
-  signal?: AbortSignal
-): Promise<ResearchSession> {
+  options: { interactive?: boolean; signal?: AbortSignal; preset?: CouncilPreset } = {}
+): Promise<RunOutcome | undefined> {
+  const preset = options.preset ?? selectPreset(parsed, true);
   const contextPaths = flagValues(parsed, '--context');
   const maxContextBytes = numberFlag(parsed, '--max-context-bytes');
   const providerFlag = flag(parsed, '--providers');
-  const repositoryPath = flag(parsed, '--repo');
-  if (repositoryPath === 'true') throw new Error('--repo requires a directory path');
+  const repositoryPath = pathFlag(parsed, '--repo');
   const input = createRunInput({
     goalParts: parsed.positionals,
     contextPaths,
     repositoryPath,
-    providers: providerFlag
-      ?.split(',')
-      .map((provider) => provider.trim())
-      .filter(Boolean),
+    providers:
+      providerFlag
+        ?.split(',')
+        .map((provider) => provider.trim())
+        .filter(Boolean) ?? preset?.providers,
     hypothesesPerProvider: numberFlag(parsed, '--hypotheses'),
     topK: numberFlag(parsed, '--top-k'),
     minProviders:
       numberFlag(parsed, '--min-providers') ??
-      (flag(parsed, '--allow-single') === 'true' ? 1 : undefined),
+      (flag(parsed, '--allow-single') === 'true' ? 1 : preset?.minProviders),
     seed: numberFlag(parsed, '--seed'),
     maxContextBytes,
     markdownOnly: flag(parsed, '--markdown-only') === 'true',
@@ -238,18 +235,37 @@ async function runCommand(
   } catch {
     throw new Error(`Repository directory not found: ${input.contextRoot || repositoryPath}`);
   }
-  const automaticallyApproved = interactive || flag(parsed, '--yes') === 'true';
-  return withCouncilRuntime(createCouncilRuntime(store), ({ service }) =>
-    service.run(input, printProgress, signal, async (preview) => {
-      if (automaticallyApproved) printRunPreview(preview);
-      else await confirmRun(preview);
-    })
-  );
+  if (preset) err(`Preset: ${preset.name}`);
+
+  if (flag(parsed, '--dry-run') === 'true') {
+    const preview = await withCouncilRuntime(createCouncilRuntime(store), ({ service }) =>
+      service.preview(input, options.signal)
+    );
+    printRunPreview(preview);
+    err('Dry run: no session was created and nothing was sent to a provider.');
+    return undefined;
+  }
+
+  const automaticallyApproved = options.interactive || flag(parsed, '--yes') === 'true';
+  const renderer = progressRenderer();
+  const startedAt = Date.now();
+  try {
+    const session = await withCouncilRuntime(createCouncilRuntime(store), ({ service }) =>
+      service.run(input, renderer.handle, options.signal, async (preview) => {
+        if (automaticallyApproved) printRunPreview(preview);
+        else await confirmRun(preview);
+      })
+    );
+    return { session, elapsedMs: Date.now() - startedAt };
+  } finally {
+    renderer.finish();
+  }
 }
 
 async function executeCommand(args: string[], store: ResearchSessionStore): Promise<void> {
   const command = args[0] || 'interactive';
   const parsed = parseArguments(args.slice(1));
+  const json = flag(parsed, '--json') === 'true';
   if (command === 'help' || flag(parsed, '--help') === 'true') {
     out(helpText());
     return;
@@ -258,32 +274,65 @@ async function executeCommand(args: string[], store: ResearchSessionStore): Prom
     await runInteractive(store);
     return;
   }
+  if (command === 'presets') {
+    out(presetsText());
+    return;
+  }
+  if (command === 'doctor') {
+    const preset = selectPreset(parsed, false);
+    const report = await withCouncilRuntime(createCouncilRuntime(store), ({ gateway }) =>
+      runDoctor({
+        gateway,
+        workingDirectory: store.sessionDirectory('doctor'),
+        sessionHome: store.root,
+        probe: flag(parsed, '--probe') === 'true',
+        rubberDuckVersion: installedRubberDuckVersion(),
+      })
+    );
+    if (preset) {
+      const missing = missingPresetCommands(preset);
+      for (const command of missing) {
+        const message = `Preset ${preset.name} requires "${command}", which is not on PATH.`;
+        if (!report.problems.includes(message)) report.problems.push(message);
+      }
+    }
+    out(
+      json
+        ? JSON.stringify(report, null, 2)
+        : `${preset ? `Preset: ${preset.name}\n` : ''}${doctorText(report)}`
+    );
+    if (report.problems.length > 0) process.exitCode = 1;
+    return;
+  }
   if (command === 'run') {
-    const session = await runCommand(parsed, store);
-    out(statusText(session));
+    const outcome = await runCommand(parsed, store);
+    if (!outcome) return;
+    const outPath = pathFlag(parsed, '--out');
+    const copiedReportPath = outPath ? copyReport(outcome.session, outPath) : undefined;
+    out(
+      json
+        ? JSON.stringify(publicSessionSnapshot(outcome.session), null, 2)
+        : runSummaryText(outcome.session, { elapsedMs: outcome.elapsedMs, copiedReportPath })
+    );
     return;
   }
   if (command === 'status') {
     const session = store.load(parsed.positionals[0]);
-    out(
-      flag(parsed, '--json') === 'true'
-        ? JSON.stringify(publicSessionSnapshot(session), null, 2)
-        : statusText(session)
-    );
+    out(json ? JSON.stringify(publicSessionSnapshot(session), null, 2) : statusText(session));
     return;
   }
   if (command === 'candidates') {
     const session = store.load(parsed.positionals[0]);
     out(
-      flag(parsed, '--json') === 'true'
+      json
         ? JSON.stringify(orderedCandidates(session).map(publicCandidateRecord), null, 2)
         : candidatesText(session)
     );
     return;
   }
   if (command === 'show') {
-    const candidateId = parsed.positionals[0];
-    if (!candidateId) throw new Error('Usage: hypothesis-council show H-001 [--session ID]');
+    if (!parsed.positionals[0]) throw new Error('Usage: hc show H-001 [--session ID]');
+    const candidateId = normalizeCandidateId(parsed.positionals[0]);
     const session = store.load(flag(parsed, '--session'));
     const candidate = session.candidates.find((item) => item.id === candidateId);
     if (!candidate) throw new Error(`Candidate not found: ${candidateId}`);
@@ -296,7 +345,7 @@ async function executeCommand(args: string[], store: ResearchSessionStore): Prom
       ? (({ reviewerProvider: _reviewer, ...visible }) => visible)(falsification)
       : undefined;
     out(
-      flag(parsed, '--json') === 'true'
+      json
         ? JSON.stringify(
             {
               ...publicCandidateRecord(candidate),
@@ -313,7 +362,7 @@ async function executeCommand(args: string[], store: ResearchSessionStore): Prom
   if (command === 'sessions') {
     const sessions = store.list();
     out(
-      flag(parsed, '--json') === 'true'
+      json
         ? JSON.stringify(sessions.map(publicSessionSnapshot), null, 2)
         : sessions
             .map((session) => `${session.id}  ${stageLabel(session)}  ${session.goal}`)
@@ -323,22 +372,37 @@ async function executeCommand(args: string[], store: ResearchSessionStore): Prom
   }
   if (command === 'report') {
     const session = store.load(parsed.positionals[0]);
-    if (!session.reportMarkdownPath) throw new Error(`Report is not ready for ${session.id}`);
-    out(readFileSync(session.reportMarkdownPath, 'utf8').trimEnd());
+    const outPath = pathFlag(parsed, '--out');
+    if (outPath) {
+      out(`Report copied to: ${copyReport(session, outPath, json)}`);
+      return;
+    }
+    out(reportText(session, json));
     return;
   }
   if (command === 'resume') {
-    const session = await withCouncilRuntime(createCouncilRuntime(store), ({ service }) =>
-      service.resume(parsed.positionals[0], printProgress)
+    const renderer = progressRenderer();
+    const startedAt = Date.now();
+    let session: ResearchSession;
+    try {
+      session = await withCouncilRuntime(createCouncilRuntime(store), ({ service }) =>
+        service.resume(parsed.positionals[0], renderer.handle)
+      );
+    } finally {
+      renderer.finish();
+    }
+    out(
+      json
+        ? JSON.stringify(publicSessionSnapshot(session), null, 2)
+        : runSummaryText(session, { elapsedMs: Date.now() - startedAt })
     );
-    out(statusText(session));
     return;
   }
   if (command === 'ask') {
     const first = parsed.positionals[0];
     const explicitSession = first?.startsWith('RC-') ? first : undefined;
     const question = parsed.positionals.slice(explicitSession ? 1 : 0).join(' ');
-    if (!question) throw new Error('Usage: hypothesis-council ask [SESSION] "<question>"');
+    if (!question) throw new Error('Usage: hc ask [SESSION] "<question>"');
     out(
       await withCouncilRuntime(createCouncilRuntime(store), ({ service }) =>
         service.ask(explicitSession, question, flag(parsed, '--provider'))
@@ -350,9 +414,17 @@ async function executeCommand(args: string[], store: ResearchSessionStore): Prom
 }
 
 async function runInteractive(store: ResearchSessionStore): Promise<void> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const historyPath = join(store.root, 'shell-history');
+  let history = loadShellHistory(historyPath);
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    history,
+    removeHistoryDuplicates: true,
+  });
   let selectedSession = store.currentId();
   let selectedProvider: string | undefined;
+  let selectedPreset: CouncilPreset | undefined;
   let chatHistory: string[] = [];
   let activeController: AbortController | undefined;
   let closing = false;
@@ -363,7 +435,8 @@ async function runInteractive(store: ResearchSessionStore): Promise<void> {
   const prompt = () => {
     const scope = selectedSession || 'home';
     const duck = selectedProvider ? ` · ${selectedProvider}` : '';
-    rl.setPrompt(`${scope}${duck}> `);
+    const preset = selectedPreset ? ` · ${selectedPreset.name}` : '';
+    rl.setPrompt(`${scope}${duck}${preset}> `);
     rl.prompt();
   };
 
@@ -382,6 +455,7 @@ async function runInteractive(store: ResearchSessionStore): Promise<void> {
     void (async () => {
       const line = rawLine.trim();
       if (!line) return;
+      history = rememberShellLine(history, line);
       if (line === '/exit') {
         activeController?.abort();
         closing = true;
@@ -401,7 +475,7 @@ async function runInteractive(store: ResearchSessionStore): Promise<void> {
         return;
       }
       if (line.startsWith('/show ')) {
-        out(candidateText(store.load(selectedSession), line.slice(6).trim()));
+        out(candidateText(store.load(selectedSession), normalizeCandidateId(line.slice(6))));
         return;
       }
       if (line === '/sessions') {
@@ -411,6 +485,37 @@ async function runInteractive(store: ResearchSessionStore): Promise<void> {
             .map((session) => `${session.id}  ${stageLabel(session)}  ${session.goal}`)
             .join('\n') || 'No sessions yet.'
         );
+        return;
+      }
+      if (line === '/presets') {
+        out(presetsText());
+        return;
+      }
+      if (line.startsWith('/preset ')) {
+        const preset = findPreset(line.slice(8).trim());
+        const missing = missingPresetCommands(preset);
+        if (missing.length > 0) {
+          throw new Error(
+            `Preset ${preset.name} needs these commands on PATH: ${missing.join(', ')}`
+          );
+        }
+        applyPreset(preset, process.env);
+        selectedPreset = preset;
+        out(`Preset ${preset.name}: ${preset.providers.join(', ')}`);
+        return;
+      }
+      if (line === '/doctor') {
+        activeController = new AbortController();
+        const report = await withCouncilRuntime(createCouncilRuntime(store), ({ gateway }) =>
+          runDoctor({
+            gateway,
+            workingDirectory: store.sessionDirectory('doctor'),
+            sessionHome: store.root,
+            rubberDuckVersion: installedRubberDuckVersion(),
+            signal: activeController?.signal,
+          })
+        );
+        out(doctorText(report));
         return;
       }
       if (line.startsWith('/use ')) {
@@ -426,27 +531,37 @@ async function runInteractive(store: ResearchSessionStore): Promise<void> {
         return;
       }
       if (line === '/report') {
-        const session = store.load(selectedSession);
-        if (!session.reportMarkdownPath) throw new Error(`Report is not ready for ${session.id}`);
-        out(readFileSync(session.reportMarkdownPath, 'utf8').trimEnd());
+        out(reportText(store.load(selectedSession), false));
         return;
       }
       if (line === '/resume') {
         activeController = new AbortController();
-        const session = await withCouncilRuntime(createCouncilRuntime(store), ({ service }) =>
-          service.resume(selectedSession, printProgress, activeController?.signal)
-        );
+        const renderer = progressRenderer();
+        const startedAt = Date.now();
+        let session: ResearchSession;
+        try {
+          session = await withCouncilRuntime(createCouncilRuntime(store), ({ service }) =>
+            service.resume(selectedSession, renderer.handle, activeController?.signal)
+          );
+        } finally {
+          renderer.finish();
+        }
         selectedSession = session.id;
-        out(statusText(session));
+        out(runSummaryText(session, { elapsedMs: Date.now() - startedAt }));
         return;
       }
       if (line === '/run' || line.startsWith('/run ')) {
         activeController = new AbortController();
         const goal = line.slice(4).trim();
         const parsed = parseArguments(goal ? [goal] : []);
-        const session = await runCommand(parsed, store, true, activeController.signal);
-        selectedSession = session.id;
-        out(statusText(session));
+        const outcome = await runCommand(parsed, store, {
+          interactive: true,
+          signal: activeController.signal,
+          preset: selectedPreset,
+        });
+        if (!outcome) return;
+        selectedSession = outcome.session.id;
+        out(runSummaryText(outcome.session, { elapsedMs: outcome.elapsedMs }));
         return;
       }
       if (line.startsWith('/')) throw new Error(`Unknown interactive command: ${line}`);
@@ -484,7 +599,7 @@ async function runInteractive(store: ResearchSessionStore): Promise<void> {
       chatHistory.push(`User: ${line}`, `Duck: ${answer}`);
     })()
       .catch((error: unknown) => {
-        err(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        reportError(error);
       })
       .finally(() => {
         activeController = undefined;
@@ -497,10 +612,17 @@ async function runInteractive(store: ResearchSessionStore): Promise<void> {
 
   prompt();
   await new Promise<void>((resolve) => rl.once('close', resolve));
+  saveShellHistory(historyPath, history);
+}
+
+function reportError(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  err(`Error: ${message}`);
+  for (const hint of errorHints(message)) err(`Hint: ${hint}`);
 }
 
 const store = new ResearchSessionStore();
 executeCommand(process.argv.slice(2), store).catch((error: unknown) => {
-  err(`Error: ${error instanceof Error ? error.message : String(error)}`);
+  reportError(error);
   process.exitCode = 1;
 });

@@ -1,7 +1,12 @@
 import { jest } from '@jest/globals';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import {
   definedEnvironment,
+  installedRubberDuckVersion,
   resolveRubberDuckLaunch,
+  resolveStdinShimPath,
   rubberDuckEnvironment,
 } from '../../src/rubber-duck/launch.js';
 
@@ -63,6 +68,11 @@ describe('Rubber Duck launch resolution', () => {
     expect(environment.CLI_CUSTOM_CODEX_CLI_ARGS).not.toContain('--full-auto');
     expect(environment.CLI_CUSTOM_CLAUDE_CLI_ARGS).toContain('--permission-mode,dontAsk');
     expect(environment.CLI_CUSTOM_CLAUDE_CLI_ARGS).toContain('--model,claude-fable-5[1m]');
+    expect(environment.CLI_CUSTOM_CLAUDE_CLI_ARGS?.split(',').slice(-3)).toEqual([
+      '--strict-mcp-config',
+      '--tools',
+      '',
+    ]);
   });
 
   it('applies global and provider-specific stdin process timeouts', () => {
@@ -99,5 +109,29 @@ describe('Rubber Duck launch resolution', () => {
     expect(environment.CLI_CUSTOM_CODEX_COMMAND).toBeUndefined();
     expect(environment.CLI_CLAUDE_ENABLED).toBe('true');
     expect(environment.CLI_CUSTOM_CLAUDE_COMMAND).toBeUndefined();
+  });
+});
+
+describe('Rubber Duck installation helpers', () => {
+  it('reads the installed Rubber Duck version from its package manifest', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hc-rd-version-'));
+    mkdirSync(join(root, 'dist'), { recursive: true });
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'mcp-rubber-duck', version: '9.9.9' })
+    );
+    writeFileSync(join(root, 'dist', 'index.js'), '');
+
+    expect(installedRubberDuckVersion(() => join(root, 'dist', 'index.js'))).toBe('9.9.9');
+    expect(
+      installedRubberDuckVersion(() => {
+        throw new Error('missing');
+      })
+    ).toBeUndefined();
+    expect(installedRubberDuckVersion()).toBe('1.20.5');
+  });
+
+  it('locates the stdin shim beside the launch module', () => {
+    expect(resolveStdinShimPath().split('\\').join('/')).toMatch(/\/rubber-duck\/stdin-shim\.js$/);
   });
 });

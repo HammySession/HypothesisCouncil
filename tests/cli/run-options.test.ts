@@ -1,3 +1,4 @@
+import { resolve } from 'path';
 import { createRunInput, DEFAULT_REPOSITORY_GOAL } from '../../src/cli/run-options.js';
 
 describe('createRunInput', () => {
@@ -6,7 +7,7 @@ describe('createRunInput', () => {
 
     expect(input).toMatchObject({
       goal: DEFAULT_REPOSITORY_GOAL,
-      contextRoot: '/work/stock_embeddings',
+      contextRoot: resolve('/work/stock_embeddings'),
       contextPaths: ['.'],
       markdownOnly: false,
     });
@@ -25,7 +26,7 @@ describe('createRunInput', () => {
 
     expect(input).toMatchObject({
       goal: 'Find data leakage',
-      contextRoot: '/work/stock_embeddings',
+      contextRoot: resolve('/work/stock_embeddings'),
       contextPaths: ['README.md', 'docs'],
       markdownOnly: true,
     });

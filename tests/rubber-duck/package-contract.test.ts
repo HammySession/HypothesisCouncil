@@ -4,6 +4,11 @@ import { join } from 'path';
 import { McpRubberDuckClient } from '../../src/rubber-duck/client.js';
 import { createSdkMcpPeer } from '../../src/rubber-duck/peer.js';
 
+// The installed Rubber Duck spawns vendor CLIs without a shell, so a fake `codex`/`claude` script
+// placed on PATH cannot shadow the real executables on Windows; running these there would contact
+// live models. The custom-provider contract below still exercises the real package everywhere.
+const itOnPosix = process.platform === 'win32' ? it.skip : it;
+
 describe('installed Rubber Duck package contract', () => {
   it('starts the pinned MCP executable and calls a configured local fake provider', async () => {
     const home = mkdtempSync(join(tmpdir(), 'hc-rubber-duck-contract-'));
@@ -47,7 +52,7 @@ describe('installed Rubber Duck package contract', () => {
     }
   });
 
-  it('adapts the installed default Codex preset to its current stdin contract', async () => {
+  itOnPosix('adapts the installed default Codex preset to its current stdin contract', async () => {
     const home = mkdtempSync(join(tmpdir(), 'hc-rubber-duck-codex-contract-'));
     const fakeCodex = join(home, 'codex');
     writeFileSync(
@@ -87,42 +92,45 @@ describe('installed Rubber Duck package contract', () => {
     }
   });
 
-  it('adapts the installed default Claude preset to stdin and parses its JSON result', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'hc-rubber-duck-claude-contract-'));
-    const fakeClaude = join(home, 'claude');
-    writeFileSync(
-      fakeClaude,
-      `#!${process.execPath}\nlet input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (chunk) => input += chunk); process.stdin.on('end', () => { if (!process.argv.includes('-p') || input !== 'contract prompt') process.exit(2); process.stdout.write(JSON.stringify({result:'claude stdin response'})); });\n`,
-      'utf8'
-    );
-    chmodSync(fakeClaude, 0o755);
-    const client = new McpRubberDuckClient(
-      createSdkMcpPeer(home, {
-        environment: {
-          HOME: home,
-          PATH: `${home}:${process.env.PATH || ''}`,
-          LOG_LEVEL: 'error',
-          NODE_ENV: 'test',
-          CLI_CLAUDE_ENABLED: 'true',
-        },
-      })
-    );
+  itOnPosix(
+    'adapts the installed default Claude preset to stdin and parses its JSON result',
+    async () => {
+      const home = mkdtempSync(join(tmpdir(), 'hc-rubber-duck-claude-contract-'));
+      const fakeClaude = join(home, 'claude');
+      writeFileSync(
+        fakeClaude,
+        `#!${process.execPath}\nlet input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (chunk) => input += chunk); process.stdin.on('end', () => { if (!process.argv.includes('-p') || input !== 'contract prompt') process.exit(2); process.stdout.write(JSON.stringify({result:'claude stdin response'})); });\n`,
+        'utf8'
+      );
+      chmodSync(fakeClaude, 0o755);
+      const client = new McpRubberDuckClient(
+        createSdkMcpPeer(home, {
+          environment: {
+            HOME: home,
+            PATH: `${home}:${process.env.PATH || ''}`,
+            LOG_LEVEL: 'error',
+            NODE_ENV: 'test',
+            CLI_CLAUDE_ENABLED: 'true',
+          },
+        })
+      );
 
-    try {
-      await expect(client.listProviders()).resolves.toEqual([
-        {
-          name: 'cli-claude',
-          nickname: 'CLAUDE Agent',
+      try {
+        await expect(client.listProviders()).resolves.toEqual([
+          {
+            name: 'cli-claude',
+            nickname: 'CLAUDE Agent',
+            model: 'cli',
+            type: 'cli',
+          },
+        ]);
+        await expect(client.ask('cli-claude', 'contract prompt')).resolves.toEqual({
+          content: 'claude stdin response',
           model: 'cli',
-          type: 'cli',
-        },
-      ]);
-      await expect(client.ask('cli-claude', 'contract prompt')).resolves.toEqual({
-        content: 'claude stdin response',
-        model: 'cli',
-      });
-    } finally {
-      await client.close();
+        });
+      } finally {
+        await client.close();
+      }
     }
-  });
+  );
 });

@@ -1,14 +1,27 @@
 import type { HypothesisCandidate, ResearchSession } from './types.js';
 
 export const PROMPT_VERSIONS = {
-  generation: 'hypothesis-generation:v1',
-  generationRepair: 'hypothesis-generation-repair:v1',
-  review: 'blind-review:v1',
-  reviewRepair: 'blind-review-repair:v1',
-  falsification: 'falsification:v1',
-  falsificationRepair: 'falsification-repair:v1',
-  ask: 'session-grounded-ask:v1',
+  generation: 'hypothesis-generation:v2',
+  generationRepair: 'hypothesis-generation-repair:v2',
+  review: 'blind-review:v2',
+  reviewRepair: 'blind-review-repair:v2',
+  falsification: 'falsification:v2',
+  falsificationRepair: 'falsification-repair:v2',
+  ask: 'session-grounded-ask:v2',
 } as const;
+
+// Vendor CLIs are agents. Without this they treat the council prompt as a task, explore the
+// session directory or repository, and return narration instead of the requested JSON.
+export const NON_INTERACTIVE_NOTICE =
+  'You are answering a non-interactive request. You have no file, shell, directory, or web access and no tools; do not attempt to inspect a repository or working directory. Everything you may use is in this message. Reply with the requested JSON only, with no preamble.';
+
+function withoutReviewer<T extends { reviewerProvider: string }>(
+  record: T | undefined
+): Omit<T, 'reviewerProvider'> | undefined {
+  if (!record) return undefined;
+  const { reviewerProvider: _reviewer, ...visible } = record;
+  return visible;
+}
 
 function publicCandidate(candidate: HypothesisCandidate): Record<string, unknown> {
   return {
@@ -25,6 +38,7 @@ function publicCandidate(candidate: HypothesisCandidate): Record<string, unknown
 
 export function buildGenerationPrompt(goal: string, contextPacket: string, count: number): string {
   return `${PROMPT_VERSIONS.generation}
+${NON_INTERACTIVE_NOTICE}
 
 You are independently generating falsifiable research hypotheses. You have not seen and must not infer another model's proposals.
 
@@ -44,6 +58,7 @@ Return JSON only in this shape:
 
 export function buildGenerationRepairPrompt(raw: string, count: number): string {
   return `${PROMPT_VERSIONS.generationRepair}
+${NON_INTERACTIVE_NOTICE}
 
 Your previous response did not satisfy the structured contract. Convert it to valid JSON without adding unsupported claims. Return exactly ${count} hypotheses when the source contains enough proposals. Required shape:
 {"hypotheses":[{"title":"...","claim":"...","mechanism":"...","predictions":["..."],"assumptions":["..."],"falsifier":"...","minimalExperiment":"...","confidence":0.5}]}
@@ -55,6 +70,7 @@ PREVIOUS_RESPONSE_END`;
 
 export function buildReviewPrompt(goal: string, candidate: HypothesisCandidate): string {
   return `${PROMPT_VERSIONS.review}
+${NON_INTERACTIVE_NOTICE}
 
 Review the hypothesis below without guessing or discussing its author. This is authorship-label-blinded review. Evaluate the idea, not its wording or length.
 
@@ -72,6 +88,7 @@ Scores must be integers or numbers from 1 to 10. Verdict must be strong_accept, 
 
 export function buildReviewRepairPrompt(raw: string): string {
   return `${PROMPT_VERSIONS.reviewRepair}
+${NON_INTERACTIVE_NOTICE}
 
 Convert the previous review to valid JSON without inventing a more favorable verdict. Required fields: plausibility, novelty, testability, falsifiability, feasibility, robustness (1-10); fatalFlaw (string or null); strongestObjection; hiddenAssumptions; proposedDiscriminatingTest; verdict; confidence (0-1).
 
@@ -82,6 +99,7 @@ PREVIOUS_RESPONSE_END`;
 
 export function buildFalsificationPrompt(goal: string, candidate: HypothesisCandidate): string {
   return `${PROMPT_VERSIONS.falsification}
+${NON_INTERACTIVE_NOTICE}
 
 Assume this attractive hypothesis is wrong. Find the strongest way it could fail. Do not guess its author.
 
@@ -97,6 +115,7 @@ Return JSON only:
 
 export function buildFalsificationRepairPrompt(raw: string): string {
   return `${PROMPT_VERSIONS.falsificationRepair}
+${NON_INTERACTIVE_NOTICE}
 
 Convert the previous falsification analysis to valid JSON without weakening its criticism. Required string fields: damagingAssumption, competingExplanation, falsifyingObservation, discriminatingExperiment, remainsUsefulIfMechanismFalse.
 
@@ -116,8 +135,12 @@ export function buildSessionAskPrompt(
     .map((candidate) => ({
       ...publicCandidate(candidate),
       rank: candidate.rank,
-      review: session.reviews.find((review) => review.hypothesisId === candidate.id),
-      falsification: session.falsifications.find((attack) => attack.hypothesisId === candidate.id),
+      review: withoutReviewer(
+        session.reviews.find((review) => review.hypothesisId === candidate.id)
+      ),
+      falsification: withoutReviewer(
+        session.falsifications.find((attack) => attack.hypothesisId === candidate.id)
+      ),
     }));
 
   return `${PROMPT_VERSIONS.ask}
