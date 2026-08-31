@@ -1,6 +1,7 @@
 import { buildContextPacket, type BuiltContext } from './context.js';
 import { calculateContextBudget } from './context-budget.js';
-import { deduplicateCandidates } from './dedup.js';
+import { deduplicateCandidates, measureConsensusCrowding } from './dedup.js';
+import { verifyEvidence } from './evidence.js';
 import { assignReviewers } from './assignment.js';
 import { parseStructuredOutput } from './parsing.js';
 import {
@@ -144,6 +145,12 @@ export class HypothesisCouncilService {
         `Context is capped by command-argument transport for: ${transportLimits.join(', ')}.`
       );
     }
+    const unmatched = context.manifest.unmatchedRequestedPaths ?? [];
+    if (unmatched.length > 0) {
+      session.warnings.push(
+        `Requested context matched no eligible files (missing, denied, or unsupported type): ${unmatched.join(', ')}.`
+      );
+    }
     this.store.save(session);
     this.store.writeContextPacket(session.id, context.packet);
     this.store.writeReport(
@@ -261,6 +268,13 @@ export class HypothesisCouncilService {
         session.stage = 'deduplicating';
         await this.emit(progress, session.stage, 0, 1, 'Clustering lexical duplicates');
         session.candidates = deduplicateCandidates(session.candidates);
+        session.consensusCrowding = measureConsensusCrowding(session.candidates);
+        if (session.consensusCrowding.crowdingRatio >= 0.5) {
+          const crowding = session.consensusCrowding;
+          session.warnings.push(
+            `Consensus crowding: ${crowding.crowdedCandidateIds.length} of ${session.candidates.length} independently generated hypotheses converged across providers (similarity >= ${crowding.similarityThreshold}). Agreement between models trained on the same literature is consensus recall, not independent replication.`
+          );
+        }
         this.store.save(session);
         await this.emit(
           progress,
@@ -473,6 +487,8 @@ export class HypothesisCouncilService {
         return hypotheses.map(
           (hypothesis, generationIndex): HypothesisCandidate => ({
             ...hypothesis,
+            // Deterministic provenance check against the sealed packet; no model is consulted.
+            evidence: verifyEvidence(hypothesis.evidence, contextPacket),
             id: `H-${String(hypothesisNumber++).padStart(3, '0')}`,
             sessionId: session.id,
             generationIndex,

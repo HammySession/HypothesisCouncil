@@ -25,6 +25,16 @@ const candidate: HypothesisCandidate = {
   mechanism: 'A mechanism',
   predictions: ['A prediction'],
   assumptions: ['An assumption'],
+  differsFromConsensus: 'Predicts an inverse correlation where consensus predicts none',
+  evidence: [
+    {
+      claim: 'A grounded claim',
+      basis: 'context',
+      contextQuote: 'quoted packet text',
+      verification: 'verified',
+    },
+    { claim: 'A remembered claim', basis: 'general-knowledge', verification: 'not-applicable' },
+  ],
   falsifier: 'A falsifier',
   minimalExperiment: 'An experiment',
   confidence: 0.5,
@@ -45,6 +55,7 @@ const review: HypothesisReview = {
   falsifiability: 7,
   feasibility: 7,
   robustness: 7,
+  killCriterion: 'concrete',
   fatalFlaw: null,
   strongestObjection: 'The strongest objection text',
   hiddenAssumptions: ['A hidden assumption'],
@@ -88,6 +99,19 @@ describe('council prompts', () => {
       expect(prompt.startsWith(`${version}\n${NON_INTERACTIVE_NOTICE}\n`)).toBe(true);
     }
     expect(NON_INTERACTIVE_NOTICE).toContain('no tools');
+  });
+
+  it('carry the falsifiability and provenance contract', () => {
+    const generationPrompt = buildGenerationPrompt('A goal', 'PACKET', 3);
+    expect(generationPrompt).toContain('"differsFromConsensus":"..."');
+    expect(generationPrompt).toContain('"basis":"context"');
+    expect(generationPrompt).toContain('restated consensus is recall, not a hypothesis');
+
+    const reviewPrompt = buildReviewPrompt('A goal', candidate);
+    expect(reviewPrompt).toContain('"killCriterion":"concrete"');
+    expect(reviewPrompt).toContain('do not accept remembered literature on authority');
+    expect(reviewPrompt).toContain('"verification": "verified"');
+    expect(reviewPrompt).toContain('Predicts an inverse correlation');
   });
 });
 

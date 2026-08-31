@@ -1,4 +1,5 @@
 import {
+  candidateText,
   candidatesText,
   errorHints,
   formatDuration,
@@ -130,7 +131,32 @@ describe('CLI formatting', () => {
 
   it('lists warnings and verdicts in status and candidate views', () => {
     expect(statusText(session())).toContain('  - duck-b returned 1/2 requested hypotheses');
-    expect(candidatesText(session())).toContain('[review 7.50 · accept]');
+    expect(candidatesText(session())).toContain('[review 7.50 · accept · novelty 7]');
+  });
+
+  it('marks untestable falsifiers, consensus crowding, and evidence provenance', () => {
+    const current = session();
+    current.consensusCrowding = {
+      similarityThreshold: 0.45,
+      clusters: [{ candidateIds: ['H-001', 'H-002'], providerCount: 2 }],
+      crowdedCandidateIds: ['H-001', 'H-002'],
+      crowdingRatio: 1,
+    };
+    current.reviews[0].killCriterion = 'untestable';
+    current.candidates[0].differsFromConsensus = 'Predicts an inverse correlation under load';
+    current.candidates[0].evidence = [
+      { claim: 'grounded', basis: 'context', contextQuote: 'quoted words', verification: 'verified' },
+      { claim: 'literature memory', basis: 'general-knowledge', verification: 'not-applicable' },
+    ];
+
+    const list = candidatesText(current);
+    expect(list).toContain('untestable falsifier');
+    expect(list).toContain('crowded');
+
+    const detail = candidateText(current, 'H-002');
+    expect(detail).toContain('Differs from consensus: Predicts an inverse correlation under load');
+    expect(detail).toContain('Evidence: 1 verified context · 1 general knowledge');
+    expect(detail).toContain('(graded untestable)');
   });
 
   it('renders the run preview with the planned call budget', () => {
@@ -169,6 +195,33 @@ describe('CLI formatting', () => {
     );
     expect(lines.find((line) => line.startsWith('Shared context budget'))).toContain(
       'argument transport'
+    );
+  });
+
+  it('warns loudly when a requested context path matched no eligible files', () => {
+    const preview: ResearchRunPreview = {
+      goal: 'Explain the drift',
+      providers: ['duck-a'],
+      minProviders: 1,
+      hypothesesPerProvider: 3,
+      topK: 3,
+      plannedCalls: { generation: 1, review: 3, falsification: 3, total: 7 },
+      contextManifest: {
+        ...session().contextManifest,
+        unmatchedRequestedPaths: ['notes/*.txt', 'missing.md'],
+      },
+      contextBudget: { maxBytes: 4096, limitingProvider: 'duck-a', providerLimits: [] },
+      contextRoot: '/repo',
+      markdownOnly: false,
+    };
+
+    const lines = runPreviewLines(preview);
+
+    expect(lines).toContain(
+      'Warning: context path "notes/*.txt" matched no eligible files (missing, denied, or unsupported type).'
+    );
+    expect(lines).toContain(
+      'Warning: context path "missing.md" matched no eligible files (missing, denied, or unsupported type).'
     );
   });
 

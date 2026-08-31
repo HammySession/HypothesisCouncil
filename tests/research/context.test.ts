@@ -62,6 +62,61 @@ describe('buildContextPacket', () => {
     expect(result.manifest.packetBytes).toBeLessThanOrEqual(result.manifest.maxBytes);
   });
 
+  it('expands glob patterns deterministically without traversing denied directories', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hc-context-glob-'));
+    mkdirSync(join(root, 'src', 'nested'), { recursive: true });
+    mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(join(root, 'src', 'a.ts'), 'export const a = 1;');
+    writeFileSync(join(root, 'src', 'nested', 'b.ts'), 'export const b = 2;');
+    writeFileSync(join(root, 'src', 'style.css'), 'body {}');
+    writeFileSync(join(root, 'node_modules', 'pkg', 'index.ts'), 'export const hidden = 3;');
+    writeFileSync(join(root, 'top.ts'), 'export const top = 4;');
+
+    const result = buildContextPacket(['**/*.ts'], 4096, root);
+
+    expect(result.manifest.files.map((file) => file.path)).toEqual([
+      'src/a.ts',
+      'src/nested/b.ts',
+      'top.ts',
+    ]);
+    expect(result.manifest.deniedPaths).toEqual([]);
+    expect(result.manifest.unmatchedRequestedPaths).toEqual([]);
+    expect(result.packet).not.toContain('hidden');
+  });
+
+  it('records requested paths and globs that matched no eligible files', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hc-context-unmatched-'));
+    writeFileSync(join(root, 'README.md'), '# Project');
+    writeFileSync(join(root, 'trace.log'), 'noise');
+
+    const result = buildContextPacket(
+      ['README.md', 'trace.log', 'missing.md', 'docs/**/*.md'],
+      2048,
+      root
+    );
+
+    expect(result.manifest.files.map((file) => file.path)).toEqual(['README.md']);
+    expect(result.manifest.unmatchedRequestedPaths).toEqual([
+      'docs/**/*.md',
+      'missing.md',
+      'trace.log',
+    ]);
+    expect(result.manifest.omittedPaths).toEqual(
+      expect.arrayContaining(['trace.log', 'missing.md'])
+    );
+  });
+
+  it('does not flag overlapping requests whose files were already collected', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hc-context-overlap-'));
+    mkdirSync(join(root, 'src'));
+    writeFileSync(join(root, 'src', 'main.ts'), 'export const main = 1;');
+
+    const result = buildContextPacket(['.', 'src/*.ts'], 2048, root);
+
+    expect(result.manifest.files.map((file) => file.path)).toEqual(['src/main.ts']);
+    expect(result.manifest.unmatchedRequestedPaths).toEqual([]);
+  });
+
   it('never exceeds the byte budget when an excerpt ends inside a UTF-8 character', () => {
     const root = mkdtempSync(join(tmpdir(), 'hc-context-utf8-'));
     writeFileSync(join(root, 'unicode.md'), 'é'.repeat(1000));

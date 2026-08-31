@@ -27,18 +27,19 @@ export function rankCandidates(
       : 0;
   }
 
+  // A fatal flaw gates hardest; an untestable declared falsifier gates below every testable
+  // candidate, because a hypothesis nothing could refute must not win on eloquence. Reviews
+  // persisted before the kill-criterion assessment existed never gate.
+  const gateLevel = (candidateId: string): number => {
+    const own = reviews.filter((review) => review.hypothesisId === candidateId);
+    if (own.some((review) => review.verdict === 'fatal' || Boolean(review.fatalFlaw))) return 2;
+    if (own.some((review) => review.killCriterion === 'untestable')) return 1;
+    return 0;
+  };
+
   distinct.sort((left, right) => {
-    const leftFatal = reviews.some(
-      (review) =>
-        review.hypothesisId === left.id && (review.verdict === 'fatal' || Boolean(review.fatalFlaw))
-    );
-    const rightFatal = reviews.some(
-      (review) =>
-        review.hypothesisId === right.id &&
-        (review.verdict === 'fatal' || Boolean(review.fatalFlaw))
-    );
     return (
-      Number(leftFatal) - Number(rightFatal) ||
+      gateLevel(left.id) - gateLevel(right.id) ||
       (right.score || 0) - (left.score || 0) ||
       left.id.localeCompare(right.id)
     );

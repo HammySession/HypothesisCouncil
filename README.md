@@ -20,14 +20,38 @@ The current implementation provides:
 - explicit, bounded shared context packets with common secret paths denied;
 - independent multi-provider generation with a sealed generation barrier;
 - tolerant JSON extraction and one repair attempt;
-- deterministic lexical deduplication;
-- balanced, authorship-label-blinded reviews;
+- mandatory differs-from-consensus statements and evidence provenance tags, with context quotes
+  verified mechanically against the sealed packet;
+- deterministic lexical deduplication and cross-provider consensus-crowding measurement;
+- balanced, authorship-label-blinded reviews that grade each declared falsifier; an untestable
+  falsifier gates a hypothesis below every testable one;
 - adversarial falsification of finalists;
-- atomic local checkpoints, raw/parsed artifacts, and Markdown/JSON reports;
+- atomic local checkpoints, raw/parsed artifacts, and Markdown/JSON/HTML reports;
 - read-only, session-grounded follow-up questions;
 - four standalone Hypothesis Council MCP tools.
 
 Pairwise Elo, evolution, exactly-once recovery, and SQLite migrations remain later slices.
+
+## Epistemic guardrails
+
+LLM councils fail scientifically in a predictable way: they restate the literature and treat
+agreement as confirmation. The workflow counters this structurally rather than by prompting
+alone:
+
+- Every hypothesis must say what it predicts that the consensus explanation does not; restated
+  consensus is recall, not a hypothesis.
+- Supporting claims are tagged `context`, `general-knowledge`, or `speculation`. Context quotes
+  are verified mechanically against the sealed packet — never by a model — so remembered
+  literature cannot pose as grounded evidence, and reviewers are told not to accept
+  general-knowledge claims on authority.
+- Reviewers grade each declared falsifier `concrete`, `vague`, or `untestable`; an untestable
+  kill criterion ranks the hypothesis below every testable candidate.
+- Cross-provider convergence is measured and reported as consensus crowding — a caution, not a
+  confidence signal — because models trained on the same literature agreeing is not independent
+  replication. Crowding never raises a candidate's rank.
+
+Reports show novelty beside the review aggregate so speculative-but-testable ideas stay visible
+next to plausible-but-boring ones.
 
 ## Setup
 
@@ -90,6 +114,7 @@ RC-...> /candidates
 RC-...> /show 1
 RC-...> Which experiment best separates H-001 from H-003?
 RC-...> /report
+RC-...> /report html     # render the report as HTML and open it in the browser
 ```
 
 Plain text is conversational. Council work starts only through an explicit command. Command
@@ -110,16 +135,25 @@ hc run "Find likely sources of training/serving skew" \
 # Send only Markdown and MDX files, and copy the report next to the code.
 hc run --repo /path/to/stock_embeddings --markdown-only --yes --out ./HYPOTHESES.md
 
+# Narrow the context with files, directories, and glob patterns (resolved against --repo).
+hc run --context src --context "docs/**/*.md" --yes
+hc run "Why is startup slow?" --context "src/**/*.ts" --context package.json --yes
+
 hc status
 hc candidates
 hc show H-001            # H1 and 1 work too
 hc ask "Which evidence would most change the ranking?"
 hc report                # --json for the JSON report, --out PATH to copy it
+hc report --html         # styled, self-contained HTML next to the session artifacts
+hc report --html --open  # ... and open it in the default browser
 ```
 
 `hc run` uses the current directory as repository context and supplies a useful default research
-goal when none is written. `--context PATH` can be repeated to narrow the repository selection;
-paths are resolved relative to `--repo`. Context is sent to external model providers. The CLI
+goal when none is written. `--context` can be repeated to narrow the repository selection; it
+accepts files, directories, and deterministic glob patterns (`*` and `?` within a path segment,
+`**` across directories), all resolved relative to `--repo`. A path or pattern that selects no
+eligible files is warned about in the run preview and recorded in the session, so silent context
+loss cannot go unnoticed. Context is sent to external model providers. The CLI
 previews included, omitted, and denied paths together with the planned number of provider calls;
 asks for confirmation in a terminal; and requires `--yes` when stdin is not interactive.
 `--dry-run` prints the same preview and exits without creating a session. `--json` prints the
@@ -224,6 +258,8 @@ See [the reviewed Slice 1 design](./docs/hypothesis-council.md),
 - “Blinded” means explicit provider labels are removed; writing style is not normalized.
 - Secret-path filtering cannot detect every secret embedded in an ordinary file.
 - Model review is structured debate, not independent experimental validation.
+- Evidence verification confirms only that a quote appears in the shared packet; claims tagged
+  general knowledge remain unverified literature memory.
 - Review aggregates are prioritization signals, not probabilities of truth.
 - Runs are foreground-owned; exiting interrupts work instead of pretending a daemon exists.
 - Explicit Rubber Duck CLI argument overrides are preserved and may therefore receive a smaller

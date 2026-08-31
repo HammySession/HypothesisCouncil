@@ -2,12 +2,20 @@ import { z } from 'zod';
 
 const confidence = z.number().transform((value) => Math.max(0, Math.min(1, value)));
 
+export const HypothesisEvidenceSchema = z.object({
+  claim: z.string().min(1),
+  basis: z.enum(['context', 'general-knowledge', 'speculation']),
+  contextQuote: z.string().optional(),
+});
+
 export const GeneratedHypothesisSchema = z.object({
   title: z.string().min(1),
   claim: z.string().min(1),
   mechanism: z.string().min(1),
   predictions: z.array(z.string()).min(1),
   assumptions: z.array(z.string()),
+  differsFromConsensus: z.string().min(1),
+  evidence: z.array(HypothesisEvidenceSchema).min(1),
   falsifier: z.string().min(1),
   minimalExperiment: z.string().min(1),
   confidence,
@@ -26,6 +34,7 @@ export const ReviewOutputSchema = z.object({
   falsifiability: reviewScore,
   feasibility: reviewScore,
   robustness: reviewScore,
+  killCriterion: z.enum(['concrete', 'vague', 'untestable']),
   fatalFlaw: z.string().nullable().optional(),
   strongestObjection: z.string().min(1),
   hiddenAssumptions: z.array(z.string()),
@@ -42,7 +51,10 @@ export const FalsificationOutputSchema = z.object({
   remainsUsefulIfMechanismFalse: z.string().min(1),
 });
 
+export type HypothesisEvidence = z.infer<typeof HypothesisEvidenceSchema>;
+export type EvidenceBasis = HypothesisEvidence['basis'];
 export type GeneratedHypothesis = z.infer<typeof GeneratedHypothesisSchema>;
 export type GenerationOutput = z.infer<typeof GenerationOutputSchema>;
 export type ReviewOutput = z.infer<typeof ReviewOutputSchema>;
+export type KillCriterionAssessment = ReviewOutput['killCriterion'];
 export type FalsificationOutput = z.infer<typeof FalsificationOutputSchema>;

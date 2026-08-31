@@ -39,20 +39,20 @@ class ScriptedGateway implements ResearchProviderGateway {
     options: ResearchCompletionOptions
   ): Promise<ResearchCompletion> {
     this.prompts.push({ provider, prompt, cwd: options.workingDirectory });
-    if (prompt.startsWith('hypothesis-generation:v2')) {
+    if (prompt.startsWith('hypothesis-generation:v3')) {
       if (provider === 'duck-a') return Promise.resolve({ content: 'not json', model: 'a-model' });
       return Promise.resolve({ content: generation('B'), model: 'b-model' });
     }
-    if (prompt.startsWith('hypothesis-generation-repair:v2')) {
+    if (prompt.startsWith('hypothesis-generation-repair:v3')) {
       return Promise.resolve({ content: generation('A'), model: 'a-model' });
     }
-    if (prompt.startsWith('blind-review:v2')) {
+    if (prompt.startsWith('blind-review:v3')) {
       return Promise.resolve({ content: review(), model: `${provider}-model` });
     }
-    if (prompt.startsWith('falsification:v2')) {
+    if (prompt.startsWith('falsification:v3')) {
       return Promise.resolve({ content: falsification(), model: `${provider}-model` });
     }
-    if (prompt.startsWith('session-grounded-ask:v2')) {
+    if (prompt.startsWith('session-grounded-ask:v3')) {
       return Promise.resolve({ content: 'A grounded answer.', model: `${provider}-model` });
     }
     throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
@@ -74,6 +74,23 @@ function generation(prefix: string): string {
           ['Selection sampling bias', 'Biased sampling overrepresents successful observations'],
           ['Queue contention burst', 'Queue contention creates correlated latency bursts'],
         ];
+  const evidence =
+    prefix === 'A'
+      ? [
+          { claim: 'A remembered latency pattern', basis: 'general-knowledge' },
+          {
+            claim: 'A claim about the packet',
+            basis: 'context',
+            contextQuote: 'This text is nowhere in the shared packet.',
+          },
+        ]
+      : [
+          {
+            claim: 'Failures cluster at open',
+            basis: 'context',
+            contextQuote: 'Observed failures cluster at open.',
+          },
+        ];
   return JSON.stringify({
     hypotheses: topics.map(([title, claim], index) => ({
       title,
@@ -81,6 +98,8 @@ function generation(prefix: string): string {
       mechanism: `${prefix} mechanism ${index + 1}`,
       predictions: [`${prefix} prediction ${index + 1}`],
       assumptions: [`${prefix} assumption ${index + 1}`],
+      differsFromConsensus: `${prefix} consensus difference ${index + 1}`,
+      evidence,
       falsifier: `${prefix} falsifier ${index + 1}`,
       minimalExperiment: `${prefix} experiment ${index + 1}`,
       confidence: 0.6,
@@ -96,6 +115,7 @@ function review(): string {
     falsifiability: 8,
     feasibility: 7,
     robustness: 6,
+    killCriterion: 'concrete',
     fatalFlaw: null,
     strongestObjection: 'A competing mechanism could explain the result.',
     hiddenAssumptions: ['Measurement is reliable'],
@@ -150,10 +170,22 @@ describe('HypothesisCouncilService', () => {
     expect(session.falsifications).toHaveLength(1);
     expect(session.calls.some((call) => call.stage === 'generation-repair')).toBe(true);
     expect(session.reportMarkdownPath && existsSync(session.reportMarkdownPath)).toBe(true);
-    expect(readFileSync(session.reportMarkdownPath!, 'utf8')).toContain(
-      'Hypothesis Council Report'
-    );
+    const markdown = readFileSync(session.reportMarkdownPath!, 'utf8');
+    expect(markdown).toContain('Hypothesis Council Report');
+    expect(markdown).toContain('Differs from consensus:');
+    expect(markdown).toContain('Evidence basis:');
     expect(readFileSync(session.reportJsonPath!, 'utf8')).not.toContain('authorProvider');
+
+    const duckA = session.candidates.find((item) => item.authorProvider === 'duck-a');
+    expect(duckA?.evidence?.map((entry) => entry.verification)).toEqual([
+      'not-applicable',
+      'unverified',
+    ]);
+    const duckB = session.candidates.find((item) => item.authorProvider === 'duck-b');
+    expect(duckB?.evidence?.map((entry) => entry.verification)).toEqual(['verified']);
+    expect(session.consensusCrowding).toBeDefined();
+    expect(session.consensusCrowding?.clusters).toEqual([]);
+    expect(session.reviews.every((item) => item.killCriterion === 'concrete')).toBe(true);
     expect(previewFiles).toEqual(['README.md']);
     expect(session.config).toMatchObject({
       contextRoot: repository,
@@ -162,12 +194,12 @@ describe('HypothesisCouncilService', () => {
     });
 
     const generationPrompts = gateway.prompts.filter((item) =>
-      item.prompt.startsWith('hypothesis-generation:v2')
+      item.prompt.startsWith('hypothesis-generation:v3')
     );
     expect(generationPrompts).toHaveLength(2);
     expect(generationPrompts[0].prompt).toBe(generationPrompts[1].prompt);
     for (const call of gateway.prompts.filter((item) =>
-      item.prompt.startsWith('blind-review:v2')
+      item.prompt.startsWith('blind-review:v3')
     )) {
       expect(call.prompt).not.toContain('authorProvider');
       expect(call.cwd).toContain(session.id);
@@ -187,7 +219,7 @@ describe('HypothesisCouncilService', () => {
         prompt: string,
         options: ResearchCompletionOptions
       ): Promise<ResearchCompletion> {
-        if (provider === 'duck-a' && prompt.startsWith('hypothesis-generation:v2')) {
+        if (provider === 'duck-a' && prompt.startsWith('hypothesis-generation:v3')) {
           this.prompts.push({ provider, prompt, cwd: options.workingDirectory });
           this.blankGenerations++;
           return Promise.resolve(
@@ -222,7 +254,7 @@ describe('HypothesisCouncilService', () => {
     );
     expect(session.calls.some((call) => call.stage === 'generation-repair')).toBe(false);
     const generationPrompts = gateway.prompts.filter(
-      (item) => item.provider === 'duck-a' && item.prompt.startsWith('hypothesis-generation:v2')
+      (item) => item.provider === 'duck-a' && item.prompt.startsWith('hypothesis-generation:v3')
     );
     expect(generationPrompts).toHaveLength(2);
     expect(generationPrompts[0].prompt).toBe(generationPrompts[1].prompt);

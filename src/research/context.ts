@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { lstatSync, readFileSync, readdirSync } from 'fs';
-import { basename, extname, relative, resolve, sep } from 'path';
+import { basename, extname, join, relative, resolve, sep } from 'path';
 import type { ContextFileRecord, ContextManifest } from './types.js';
 
 const DEFAULT_MAX_BYTES = 64 * 1024;
@@ -148,6 +148,82 @@ function isDenied(path: string): boolean {
   );
 }
 
+/** A requested context path containing `*` or `?` is treated as a glob pattern, not a file path. */
+export function isGlobPattern(value: string): boolean {
+  return /[*?]/.test(value);
+}
+
+function globSegmentToRegExp(segment: string): RegExp {
+  const escaped = segment
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*')
+    .replace(/\?/g, '.');
+  return new RegExp(`^${escaped}$`);
+}
+
+/**
+ * Deterministic glob expansion relative to the repository root. Supports `*` and `?` within a
+ * path segment and `**` for any number of directories. A matched directory selects its whole
+ * subtree, like passing the directory itself. Denied directories are never traversed, so a broad
+ * pattern such as `**\/*.ts` cannot flood the manifest with `node_modules` denials; a leaf match
+ * on a denied file is still recorded by the normal visit so the denial stays visible.
+ */
+function expandGlobPattern(pattern: string, cwd: string, visit: (path: string) => void): void {
+  const parts = pattern.split(/[\\/]+/).filter((part) => part.length > 0 && part !== '.');
+  const splitIndex = parts.findIndex((part) => isGlobPattern(part));
+  const baseParts = splitIndex === -1 ? parts : parts.slice(0, splitIndex);
+  const patternParts = splitIndex === -1 ? [] : parts.slice(splitIndex);
+  const startDirectory = resolve(cwd, baseParts.join('/') || '.');
+
+  const walk = (directory: string, segments: string[]): void => {
+    if (segments.length === 0) {
+      visit(directory);
+      return;
+    }
+    let entries: string[];
+    try {
+      entries = readdirSync(directory).sort();
+    } catch {
+      return;
+    }
+    const [segment, ...rest] = segments;
+    if (segment === '**') {
+      walk(directory, rest);
+      for (const entry of entries) {
+        const path = join(directory, entry);
+        if (DENIED_SEGMENTS.has(entry)) continue;
+        let stat;
+        try {
+          stat = lstatSync(path);
+        } catch {
+          continue;
+        }
+        if (stat.isDirectory() && !stat.isSymbolicLink()) walk(path, segments);
+      }
+      return;
+    }
+    const matcher = globSegmentToRegExp(segment);
+    for (const entry of entries) {
+      if (!matcher.test(entry)) continue;
+      const path = join(directory, entry);
+      if (rest.length === 0) {
+        visit(path);
+        continue;
+      }
+      if (DENIED_SEGMENTS.has(entry)) continue;
+      let stat;
+      try {
+        stat = lstatSync(path);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory() && !stat.isSymbolicLink()) walk(path, rest);
+    }
+  };
+
+  walk(startDirectory, patternParts);
+}
+
 function priority(path: string): number {
   const normalized = path.split(sep).join('/').toLowerCase();
   const name = basename(normalized);
@@ -163,11 +239,18 @@ function collectFiles(
   requestedPaths: string[],
   cwd: string,
   markdownOnly: boolean
-): { files: CollectedFile[]; deniedPaths: string[]; omittedPaths: string[] } {
+): {
+  files: CollectedFile[];
+  deniedPaths: string[];
+  omittedPaths: string[];
+  unmatchedRequestedPaths: string[];
+} {
   const paths = new Set<string>();
   const deniedPaths: string[] = [];
   const omittedPaths: string[] = [];
+  const unmatchedRequestedPaths: string[] = [];
   const allowed = markdownOnly ? MARKDOWN_EXTENSIONS : ALLOWED_EXTENSIONS;
+  let eligibleMatches = 0;
 
   const visit = (path: string) => {
     const shown = displayPath(path, cwd);
@@ -200,9 +283,21 @@ function collectFiles(
       return;
     }
     paths.add(path);
+    eligibleMatches++;
   };
 
-  for (const path of requestedPaths.map((value) => resolve(cwd, value)).sort()) visit(path);
+  const requests = requestedPaths
+    .map((value) => ({
+      value: value.split(sep).join('/'),
+      resolved: isGlobPattern(value) ? undefined : resolve(cwd, value),
+    }))
+    .sort((left, right) => (left.resolved ?? left.value).localeCompare(right.resolved ?? right.value));
+  for (const request of requests) {
+    eligibleMatches = 0;
+    if (request.resolved !== undefined) visit(request.resolved);
+    else expandGlobPattern(request.value, cwd, visit);
+    if (eligibleMatches === 0) unmatchedRequestedPaths.push(request.value);
+  }
   const files = [...paths]
     .map((absolutePath) => {
       const contents = readFileSync(absolutePath);
@@ -218,7 +313,7 @@ function collectFiles(
         priority(left.shownPath) - priority(right.shownPath) ||
         left.shownPath.localeCompare(right.shownPath)
     );
-  return { files, deniedPaths, omittedPaths };
+  return { files, deniedPaths, omittedPaths, unmatchedRequestedPaths };
 }
 
 function buildRepositoryManifest(files: CollectedFile[], maxBytes: number): string {
@@ -353,6 +448,7 @@ export function buildContextPacket(
       files: records,
       deniedPaths: [...new Set(collected.deniedPaths)].sort(),
       omittedPaths: [...new Set(collected.omittedPaths)].sort(),
+      unmatchedRequestedPaths: [...new Set(collected.unmatchedRequestedPaths)].sort(),
       totalBytes,
       includedBytes,
       packetBytes,

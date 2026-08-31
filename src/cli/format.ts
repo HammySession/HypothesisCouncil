@@ -1,3 +1,4 @@
+import { describeEvidence } from '../research/evidence.js';
 import type {
   HypothesisCandidate,
   ResearchRunPreview,
@@ -66,11 +67,17 @@ export function candidatesText(session: ResearchSession): string {
   if (session.candidates.length === 0) {
     return 'Candidates are sealed until independent generation completes.';
   }
+  const crowded = new Set(session.consensusCrowding?.crowdedCandidateIds ?? []);
   const rows = orderedCandidates(session).map((candidate) => {
     const rank = candidate.rank ? `${candidate.rank}.` : '—';
     const score = candidate.score === undefined ? 'pending' : candidate.score.toFixed(2);
-    const verdict = session.reviews.find((review) => review.hypothesisId === candidate.id)?.verdict;
-    return `${rank.padEnd(4)} ${candidate.id.padEnd(6)} ${candidate.title}  [review ${score}${verdict ? ` · ${verdict}` : ''}]`;
+    const review = session.reviews.find((item) => item.hypothesisId === candidate.id);
+    const markers = [
+      review ? `novelty ${review.novelty}` : '',
+      review?.killCriterion === 'untestable' ? 'untestable falsifier' : '',
+      crowded.has(candidate.id) ? 'crowded' : '',
+    ].filter(Boolean);
+    return `${rank.padEnd(4)} ${candidate.id.padEnd(6)} ${candidate.title}  [review ${score}${review ? ` · ${review.verdict}` : ''}${markers.length ? ` · ${markers.join(' · ')}` : ''}]`;
   });
   return [`Candidates for ${session.id}`, ...rows].join('\n');
 }
@@ -87,7 +94,9 @@ export function candidateText(session: ResearchSession, candidateId: string): st
     `Mechanism: ${candidate.mechanism}`,
     `Predictions: ${candidate.predictions.join('; ')}`,
     `Assumptions: ${candidate.assumptions.join('; ') || 'None recorded'}`,
-    `Falsifier: ${candidate.falsifier}`,
+    `Differs from consensus: ${candidate.differsFromConsensus || 'Not recorded (pre-upgrade session)'}`,
+    `Evidence: ${describeEvidence(candidate.evidence)}`,
+    `Falsifier: ${candidate.falsifier}${review?.killCriterion ? ` (graded ${review.killCriterion})` : ''}`,
     `Minimal experiment: ${candidate.minimalExperiment}`,
     `Review: ${review?.verdict || 'pending'}${review ? ` — ${review.strongestObjection}` : ''}`,
     `Adversarial attack: ${attack?.competingExplanation || 'not selected/pending'}`,
@@ -109,6 +118,11 @@ export function runPreviewLines(preview: ResearchRunPreview): string[] {
     `Context preview: ${manifest.files.length} files contribute ${formatBytes(manifest.includedBytes)}; packet ${formatBytes(manifest.packetBytes)}/${formatBytes(manifest.maxBytes)}; denied ${manifest.deniedPaths.length}; omitted ${manifest.omittedPaths.length}`,
     `Planned provider calls: ${calls.total} (${calls.generation} generation × ${preview.hypothesesPerProvider} hypotheses, up to ${calls.review} reviews, ${calls.falsification} falsifications), plus repairs and retries when needed`,
   ];
+  for (const path of manifest.unmatchedRequestedPaths ?? []) {
+    lines.push(
+      `Warning: context path "${path}" matched no eligible files (missing, denied, or unsupported type).`
+    );
+  }
   for (const file of manifest.files.slice(0, 20)) {
     lines.push(
       `  include ${file.path}${file.truncated ? ` (${formatBytes(file.includedBytes)} excerpt)` : ''}`

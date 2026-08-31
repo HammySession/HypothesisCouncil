@@ -21,6 +21,7 @@ import {
   statusText,
 } from './format.js';
 import { loadShellHistory, rememberShellLine, saveShellHistory } from './history.js';
+import { openInBrowser, renderHtmlReport } from './html-report.js';
 import {
   applyPreset,
   findPreset,
@@ -47,8 +48,10 @@ const BOOLEAN_FLAGS = new Set([
   '--allow-single',
   '--dry-run',
   '--help',
+  '--html',
   '--json',
   '--markdown-only',
+  '--open',
   '--probe',
   '--yes',
 ]);
@@ -173,7 +176,9 @@ Usage:
                                              Check providers, models, transports, and CLIs
   hc presets                                 List ready-made council presets
   hc run                                     Analyze the current repository
-  hc run "<goal>" [--repo PATH] [--context PATH]... [--markdown-only] [--yes]
+  hc run "<goal>" [--repo PATH] [--context PATH|GLOB]... [--markdown-only] [--yes]
+                                             --context accepts files, directories, and glob
+                                             patterns such as "src/**/*.ts"
   hc run [--preset NAME] [--providers a,b] [--min-providers N] [--max-context-bytes N]
   hc run [--dry-run] [--out PATH] [--json]   Preview only / copy the report / machine output
   hc status [SESSION] [--json]
@@ -181,7 +186,9 @@ Usage:
   hc show H-001 [--session SESSION] [--json] (H1 and 1 are accepted too)
   hc ask [SESSION] "<question>" [--provider NAME]
   hc resume [SESSION]
-  hc report [SESSION] [--json] [--out PATH]
+  hc report [SESSION] [--json] [--out PATH] [--html] [--open]
+                                             --html writes a styled HTML report; --open also
+                                             opens it in your default browser
   hc sessions [--json]
 
 Interactive commands:
@@ -194,7 +201,7 @@ Interactive commands:
   /use SESSION      Select a persisted session
   /duck PROVIDER    Select the conversational duck
   /resume           Resume from the last durable stage
-  /report           Show the Markdown report
+  /report [html]    Show the Markdown report; /report html opens it in the browser
   /sessions         List sessions
   /help             Show commands
   /exit             Exit (an active run is interrupted and checkpointed)
@@ -373,6 +380,25 @@ async function executeCommand(args: string[], store: ResearchSessionStore): Prom
   if (command === 'report') {
     const session = store.load(parsed.positionals[0]);
     const outPath = pathFlag(parsed, '--out');
+    const html = flag(parsed, '--html') === 'true' || flag(parsed, '--open') === 'true';
+    if (html) {
+      if (json) throw new Error('--html/--open cannot be combined with --json');
+      const rendered = renderHtmlReport(
+        reportText(session, false),
+        `Hypothesis Council · ${session.id}`
+      );
+      let target: string;
+      if (outPath) {
+        target = resolveOutputPath(outPath, `${session.id}.html`);
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, rendered);
+      } else {
+        target = store.writeReport(session.id, 'report.html', rendered);
+      }
+      out(`HTML report: ${target}`);
+      if (flag(parsed, '--open') === 'true') openInBrowser(target);
+      return;
+    }
     if (outPath) {
       out(`Report copied to: ${copyReport(session, outPath, json)}`);
       return;
@@ -532,6 +558,17 @@ async function runInteractive(store: ResearchSessionStore): Promise<void> {
       }
       if (line === '/report') {
         out(reportText(store.load(selectedSession), false));
+        return;
+      }
+      if (line === '/report html') {
+        const session = store.load(selectedSession);
+        const rendered = renderHtmlReport(
+          reportText(session, false),
+          `Hypothesis Council · ${session.id}`
+        );
+        const target = store.writeReport(session.id, 'report.html', rendered);
+        out(`HTML report: ${target}`);
+        openInBrowser(target);
         return;
       }
       if (line === '/resume') {
