@@ -1,5 +1,11 @@
 import { assignReviewers } from '../../src/research/assignment.js';
-import { deduplicateCandidates, measureConsensusCrowding } from '../../src/research/dedup.js';
+import {
+  clusterBySimilarity,
+  deduplicateCandidates,
+  measureConsensusCrowding,
+  textSimilarity,
+} from '../../src/research/dedup.js';
+import { resolveDialPolicy } from '../../src/research/dials.js';
 import { rankCandidates } from '../../src/research/ranking.js';
 import type { HypothesisCandidate, HypothesisReview } from '../../src/research/types.js';
 
@@ -91,6 +97,81 @@ describe('research core algorithms', () => {
     for (const item of candidates) expect(first.get(item.id)).not.toBe(item.authorProvider);
   });
 
+  it('prefers a fresh non-author when earlier attackers are excluded', () => {
+    const candidates = [candidate('H-001', 'a', 'One', 'Claim one')];
+    const exclude = new Map([['H-001', ['b']]]);
+    expect(assignReviewers(candidates, ['a', 'b', 'c'], 1, { exclude }).get('H-001')).toBe('c');
+    // With only the author left unexcluded, the author attacks rather than nobody.
+    expect(assignReviewers(candidates, ['a', 'b'], 1, { exclude }).get('H-001')).toBe('a');
+    // When everyone is excluded, fall back to the ordinary non-author pool.
+    const all = new Map([['H-001', ['a', 'b']]]);
+    expect(assignReviewers(candidates, ['a', 'b'], 1, { exclude: all }).get('H-001')).toBe('b');
+  });
+
+  it('keeps default ranking unchanged at dial level 5/5 and ignores crowding there', () => {
+    const build = () => [
+      candidate('H-001', 'a', 'One', 'Claim one'),
+      candidate('H-002', 'b', 'Two', 'Claim two'),
+    ];
+    const reviews = [review('H-001', 8), review('H-002', 7)];
+    const plain = rankCandidates(build(), reviews);
+    const dialed = rankCandidates(build(), reviews, {
+      policy: resolveDialPolicy({ novelty: 5, skepticism: 5 }),
+      crowdedCandidateIds: ['H-001'],
+    });
+    const summary = (items: HypothesisCandidate[]) =>
+      items.map((item) => [item.id, item.rank, item.score]);
+    expect(summary(dialed)).toEqual(summary(plain));
+    expect(dialed.every((item) => item.scorePenalties === undefined)).toBe(true);
+    expect(plain.find((item) => item.id === 'H-001')?.score).toBe(8);
+  });
+
+  it('penalises consensus-crowded candidates at high novelty', () => {
+    const ranked = rankCandidates(
+      [
+        candidate('H-001', 'a', 'Crowded', 'Claim one'),
+        candidate('H-002', 'b', 'Lonely', 'Claim two'),
+      ],
+      [review('H-001', 7), review('H-002', 7)],
+      { policy: resolveDialPolicy({ novelty: 10 }), crowdedCandidateIds: ['H-001'] }
+    );
+    const crowded = ranked.find((item) => item.id === 'H-001');
+    expect(crowded?.rank).toBe(2);
+    expect(crowded?.scorePenalties).toEqual({ crowding: 1.5 });
+    expect(crowded?.score).toBe(5.5);
+    expect(ranked.find((item) => item.id === 'H-002')?.rank).toBe(1);
+  });
+
+  it('penalises and gates unverified evidence at high skepticism', () => {
+    const build = () => {
+      const grounded = candidate('H-001', 'a', 'Grounded', 'Claim one');
+      grounded.evidence = [
+        { claim: 'quoted', basis: 'context', contextQuote: 'q', verification: 'verified' },
+      ];
+      const remembered = candidate('H-002', 'b', 'Remembered', 'Claim two');
+      remembered.evidence = [
+        { claim: 'recalled', basis: 'general-knowledge', verification: 'not-applicable' },
+      ];
+      return [grounded, remembered];
+    };
+    const reviews = [review('H-001', 6), review('H-002', 9)];
+
+    const strict = rankCandidates(build(), reviews, {
+      policy: resolveDialPolicy({ skepticism: 10 }),
+    });
+    expect(strict.find((item) => item.id === 'H-001')?.rank).toBe(1);
+    const weak = strict.find((item) => item.id === 'H-002');
+    expect(weak?.rank).toBe(2);
+    expect(weak?.scorePenalties).toEqual({ unsupportedEvidence: 1 });
+    expect(weak?.score).toBe(8);
+
+    const moderate = rankCandidates(build(), reviews, {
+      policy: resolveDialPolicy({ skepticism: 7 }),
+    });
+    expect(moderate.find((item) => item.id === 'H-002')?.rank).toBe(1);
+    expect(moderate.find((item) => item.id === 'H-002')?.score).toBeCloseTo(8.6);
+  });
+
   it('gates fatal flaws ahead of numeric review scores', () => {
     const candidates = [
       candidate('H-001', 'a', 'High but fatal', 'Claim one'),
@@ -143,9 +224,7 @@ describe('research core algorithms', () => {
       ),
       candidate('H-003', 'a', 'Clock drift', 'Clock drift causes ordering failures'),
     ]);
-    expect(crowding.clusters).toEqual([
-      { candidateIds: ['H-001', 'H-002'], providerCount: 2 },
-    ]);
+    expect(crowding.clusters).toEqual([{ candidateIds: ['H-001', 'H-002'], providerCount: 2 }]);
     expect(crowding.crowdedCandidateIds).toEqual(['H-001', 'H-002']);
     expect(crowding.crowdingRatio).toBeCloseTo(2 / 3);
 
@@ -155,5 +234,32 @@ describe('research core algorithms', () => {
     ]);
     expect(selfAgreement.clusters).toEqual([]);
     expect(selfAgreement.crowdingRatio).toBe(0);
+  });
+
+  it('measures text similarity on content words and clusters order-independently', () => {
+    expect(textSimilarity('The cache is stale', 'A stale cache')).toBe(1);
+    expect(textSimilarity('', 'anything')).toBe(0);
+    expect(textSimilarity('alpha beta gamma', 'alpha delta')).toBeCloseTo(1 / 4);
+
+    const items = [
+      { key: 'x', text: 'clock drift reverses event ordering' },
+      { key: 'y', text: 'stale cache reads after eviction' },
+      { key: 'z', text: 'clock drift reverses ordering' },
+      { key: 'w', text: 'unrelated network partition' },
+    ];
+    const forward = clusterBySimilarity(items, (item) => item.text, 0.6);
+    const reversed = clusterBySimilarity([...items].reverse(), (item) => item.text, 0.6).map(
+      (group) => group.map((index) => items.length - 1 - index).sort((a, b) => a - b)
+    );
+    expect(forward).toEqual([[0, 2], [1], [3]]);
+    expect([...reversed].sort((a, b) => a[0] - b[0])).toEqual(forward);
+    expect(
+      clusterBySimilarity(
+        items,
+        (item) => item.text,
+        0.6,
+        (left, right) => left.key !== 'x' && right.key !== 'x'
+      )
+    ).toEqual([[0], [1], [2], [3]]);
   });
 });

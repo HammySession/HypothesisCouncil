@@ -1,3 +1,5 @@
+import type { DialPolicy, SourceVerificationMode } from './dials.js';
+import type { ProposalStage } from './proposal/types.js';
 import type {
   FalsificationOutput,
   GeneratedHypothesis,
@@ -5,10 +7,25 @@ import type {
   KillCriterionAssessment,
   ReviewOutput,
 } from './schemas.js';
+import type { DialConfig, DialInput } from './settings.js';
+import type { SourceRecord, SourceReplication } from './sources.js';
+
+export type { DialPolicy } from './dials.js';
+export type {
+  SourceCritiqueRecord,
+  SourceKind,
+  SourceOrigin,
+  SourceRecord,
+  SourceReplication,
+  SourceVerificationRecord,
+  SourceVerificationStatus,
+} from './sources.js';
+export type { DialConfig, DialInput, DialSettings, SettingOrigin } from './settings.js';
 
 export type ResearchStage =
   | 'created'
   | 'preflight'
+  | 'sourcing'
   | 'generating'
   | 'deduplicating'
   | 'reviewing'
@@ -42,6 +59,10 @@ export interface ContextManifest {
   packetBytes: number;
   maxBytes: number;
   packetSha256: string;
+  /** Bytes held back from files for the SOURCES appendix; absent when no sources stage runs. */
+  reservedBytes?: number;
+  /** Bytes the SOURCES appendix occupies once it has been added to the packet. */
+  appendixBytes?: number;
 }
 
 export interface ProviderContextLimit {
@@ -71,10 +92,16 @@ export type EvidenceVerification = 'verified' | 'unverified' | 'not-applicable';
  */
 export interface VerifiedEvidence extends HypothesisEvidence {
   verification: EvidenceVerification;
+  /** Copied from the cited source's critique so reviewers see the grade without the grader. */
+  reliability?: number;
+  replication?: SourceReplication;
+  concerns?: string[];
 }
 
-export interface HypothesisCandidate
-  extends Omit<GeneratedHypothesis, 'differsFromConsensus' | 'evidence'> {
+export interface HypothesisCandidate extends Omit<
+  GeneratedHypothesis,
+  'differsFromConsensus' | 'evidence'
+> {
   id: string;
   sessionId: string;
   generationIndex: number;
@@ -84,11 +111,20 @@ export interface HypothesisCandidate
   differsFromConsensus?: string;
   /** Absent on sessions persisted before the falsifiability/provenance upgrade. */
   evidence?: VerifiedEvidence[];
+  /** Which sealed generation batch produced the candidate; absent before the dials existed. */
+  variant?: 'standard' | 'out-of-box';
   status: 'distinct' | 'duplicate';
   duplicateOf?: string;
   score?: number;
+  /** Points the dial policy subtracted from the review aggregate; present only when non-zero. */
+  scorePenalties?: ScorePenalties;
   rank?: number;
   createdAt: string;
+}
+
+export interface ScorePenalties {
+  crowding?: number;
+  unsupportedEvidence?: number;
 }
 
 export interface HypothesisReview extends Omit<ReviewOutput, 'killCriterion'> {
@@ -107,6 +143,8 @@ export interface HypothesisFalsification extends FalsificationOutput {
   sessionId: string;
   hypothesisId: string;
   reviewerProvider: string;
+  /** Adversarial round (1 when absent); high skepticism runs a second independent round. */
+  round?: number;
   createdAt: string;
 }
 
@@ -133,12 +171,26 @@ export interface ProviderCallRecord {
   id: string;
   stage:
     | 'generation'
+    | 'generation-outofbox'
     | 'generation-repair'
     | 'review'
     | 'review-repair'
     | 'falsification'
     | 'falsification-repair'
-    | 'ask';
+    | 'source-scout'
+    | 'source-scout-repair'
+    | 'source-critique'
+    | 'source-critique-repair'
+    | 'ask'
+    | 'interview'
+    | 'interview-repair'
+    | 'proposal-draft'
+    | 'proposal-draft-repair'
+    | 'proposal-critique'
+    | 'proposal-critique-repair'
+    | 'proposal-synthesis'
+    | 'proposal-synthesis-repair'
+    | 'proposal-ask';
   provider: string;
   subject: string;
   promptVersion: string;
@@ -161,12 +213,43 @@ export interface ResearchConfig {
   contextRoot: string;
   markdownOnly: boolean;
   contextBudget: ContextBudgetPlan;
+  /** Dial values with origins; absent on sessions persisted before the dials existed. */
+  dials?: DialConfig;
+  /** The policy derived from the dials at run time; absent on pre-dial sessions. */
+  policy?: DialPolicy;
+  /** Sources stage settings; absent when the run cites nothing beyond the file packet. */
+  sources?: SourcesConfig;
+}
+
+export type WebAccess = 'on' | 'off';
+
+/** How the sources stage was configured for a session. */
+export interface SourcesConfig {
+  /** Path of the person's sources file relative to the context root, when one was given. */
+  sourcesFile?: string;
+  /** Web scout providers that proposed sources; never council members. */
+  scouts: string[];
+  web: WebAccess;
+  verification: SourceVerificationMode;
+  sourcesPerScout: number;
+  rounds: number;
+  critique: boolean;
+}
+
+/** User-facing annotations on a session; editable without re-running anything. */
+export interface SessionMeta {
+  title?: string;
+  tags?: string[];
+  summary?: string;
+  /** Council preset the session was started with, when one was used. */
+  preset?: string;
 }
 
 export interface ResearchSession {
   version: 1;
   id: string;
   goal: string;
+  meta?: SessionMeta;
   status: ResearchStatus;
   stage: ResearchStage;
   createdAt: string;
@@ -175,6 +258,10 @@ export interface ResearchSession {
   providers: string[];
   unavailableProviders: string[];
   contextManifest: ContextManifest;
+  /** Source records the packet cites; user-supplied ones are present from the start. */
+  sources?: SourceRecord[];
+  /** Set once the sources stage has verified, critiqued, and appended the records. */
+  sourcesCompletedAt?: string;
   candidates: HypothesisCandidate[];
   /** Absent on sessions persisted before the falsifiability/provenance upgrade. */
   consensusCrowding?: ConsensusCrowding;
@@ -198,13 +285,41 @@ export interface RunResearchInput {
   maxContextBytes?: number;
   contextRoot?: string;
   markdownOnly?: boolean;
+  /** Novelty and skepticism levels; missing values use the default level 5. */
+  dials?: DialInput;
+  /** Sources file (JSON or Markdown) relative to the context root. */
+  sourcesFile?: string;
+  /** Scout providers; defaults to every configured provider named `*-scout` or `*_scout`. */
+  scouts?: string[];
+  /** `off` disables scouting and URL fetching entirely. Defaults to `on` when scouts exist. */
+  web?: WebAccess;
+  /** Copied onto the session as-is. */
+  meta?: SessionMeta;
 }
 
 export interface PlannedProviderCalls {
   generation: number;
+  /** Extra sealed out-of-the-box generation calls (high novelty only). */
+  outOfBox: number;
   review: number;
   falsification: number;
+  falsificationRounds: number;
+  /** Scout and source-critique calls; present only when a sources stage is planned. */
+  sourcing?: number;
   total: number;
+}
+
+export interface SourcesPlan {
+  sourcesFile?: string;
+  userSources: number;
+  scouts: string[];
+  web: WebAccess;
+  rounds: number;
+  sourcesPerScout: number;
+  verification: SourceVerificationMode;
+  critique: boolean;
+  /** Bytes of the shared budget held back for the SOURCES appendix. */
+  reservedBytes: number;
 }
 
 export interface ResearchRunPreview {
@@ -218,12 +333,17 @@ export interface ResearchRunPreview {
   contextBudget: ContextBudgetPlan;
   contextRoot: string;
   markdownOnly: boolean;
+  dials: DialConfig;
+  policy: DialPolicy;
+  /** Present when the run will cite sources (a sources file or at least one scout). */
+  sourcesPlan?: SourcesPlan;
 }
 
 export type ResearchRunApproval = (preview: ResearchRunPreview) => void | Promise<void>;
 
 export interface ResearchProgress {
-  stage: ResearchStage;
+  /** Council stage, or a proposal stage when a proposal session reports progress. */
+  stage: ResearchStage | ProposalStage;
   completed: number;
   total: number;
   message: string;

@@ -23,9 +23,9 @@ const STOP_WORDS = new Set([
   'with',
 ]);
 
-function tokens(candidate: HypothesisCandidate): Set<string> {
+function tokens(text: string): Set<string> {
   return new Set(
-    `${candidate.title} ${candidate.claim}`
+    text
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, ' ')
       .split(/\s+/)
@@ -33,13 +33,62 @@ function tokens(candidate: HypothesisCandidate): Set<string> {
   );
 }
 
-export function candidateSimilarity(left: HypothesisCandidate, right: HypothesisCandidate): number {
+/** Jaccard similarity of the content words in two texts, in [0, 1]. */
+export function textSimilarity(left: string, right: string): number {
   const leftTokens = tokens(left);
   const rightTokens = tokens(right);
   const union = new Set([...leftTokens, ...rightTokens]);
   if (union.size === 0) return 0;
   const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length;
   return intersection / union.size;
+}
+
+function candidateText(candidate: HypothesisCandidate): string {
+  return `${candidate.title} ${candidate.claim}`;
+}
+
+export function candidateSimilarity(left: HypothesisCandidate, right: HypothesisCandidate): number {
+  return textSimilarity(candidateText(left), candidateText(right));
+}
+
+/**
+ * Group items whose texts are at least `threshold` similar (transitively). Returns index groups,
+ * each in ascending order and ordered by their first member, so the result does not depend on the
+ * order pairs were compared in. `eligible` can veto a pair (for example same-author pairs).
+ */
+export function clusterBySimilarity<T>(
+  items: T[],
+  text: (item: T) => string,
+  threshold: number,
+  eligible: (left: T, right: T) => boolean = () => true
+): number[][] {
+  const parent = items.map((_, index) => index);
+  const find = (index: number): number => {
+    while (parent[index] !== index) {
+      parent[index] = parent[parent[index]];
+      index = parent[index];
+    }
+    return index;
+  };
+  const texts = items.map(text);
+  for (let left = 0; left < items.length; left++) {
+    for (let right = left + 1; right < items.length; right++) {
+      if (!eligible(items[left], items[right])) continue;
+      if (textSimilarity(texts[left], texts[right]) >= threshold) {
+        const leftRoot = find(left);
+        const rightRoot = find(right);
+        if (leftRoot !== rightRoot) parent[rightRoot] = leftRoot;
+      }
+    }
+  }
+  const groups = new Map<number, number[]>();
+  for (let index = 0; index < items.length; index++) {
+    const root = find(index);
+    groups.set(root, [...(groups.get(root) || []), index]);
+  }
+  return [...groups.values()]
+    .map((group) => [...group].sort((left, right) => left - right))
+    .sort((left, right) => left[0] - right[0]);
 }
 
 function completeness(candidate: HypothesisCandidate): number {
@@ -63,31 +112,12 @@ export function measureConsensusCrowding(
   candidates: HypothesisCandidate[],
   threshold = CONSENSUS_CROWDING_THRESHOLD
 ): ConsensusCrowding {
-  const parent = candidates.map((_, index) => index);
-  const find = (index: number): number => {
-    while (parent[index] !== index) {
-      parent[index] = parent[parent[index]];
-      index = parent[index];
-    }
-    return index;
-  };
-
-  for (let left = 0; left < candidates.length; left++) {
-    for (let right = left + 1; right < candidates.length; right++) {
-      if (candidates[left].authorProvider === candidates[right].authorProvider) continue;
-      if (candidateSimilarity(candidates[left], candidates[right]) >= threshold) {
-        parent[find(right)] = find(left);
-      }
-    }
-  }
-
-  const groups = new Map<number, number[]>();
-  for (let index = 0; index < candidates.length; index++) {
-    const root = find(index);
-    groups.set(root, [...(groups.get(root) || []), index]);
-  }
-
-  const clusters = [...groups.values()]
+  const clusters = clusterBySimilarity(
+    candidates,
+    candidateText,
+    threshold,
+    (left, right) => left.authorProvider !== right.authorProvider
+  )
     .filter((group) => group.length > 1)
     .map((group) => ({
       candidateIds: group.map((index) => candidates[index].id).sort(),
@@ -107,36 +137,8 @@ export function deduplicateCandidates(
   candidates: HypothesisCandidate[],
   threshold = 0.82
 ): HypothesisCandidate[] {
-  const parent = candidates.map((_, index) => index);
-  const find = (index: number): number => {
-    while (parent[index] !== index) {
-      parent[index] = parent[parent[index]];
-      index = parent[index];
-    }
-    return index;
-  };
-  const union = (left: number, right: number) => {
-    const leftRoot = find(left);
-    const rightRoot = find(right);
-    if (leftRoot !== rightRoot) parent[rightRoot] = leftRoot;
-  };
-
-  for (let left = 0; left < candidates.length; left++) {
-    for (let right = left + 1; right < candidates.length; right++) {
-      if (candidateSimilarity(candidates[left], candidates[right]) >= threshold) {
-        union(left, right);
-      }
-    }
-  }
-
-  const groups = new Map<number, number[]>();
-  for (let index = 0; index < candidates.length; index++) {
-    const root = find(index);
-    groups.set(root, [...(groups.get(root) || []), index]);
-  }
-
   const result = candidates.map((candidate) => ({ ...candidate }));
-  for (const group of groups.values()) {
+  for (const group of clusterBySimilarity(candidates, candidateText, threshold)) {
     const representative = [...group].sort((left, right) => {
       const scoreDifference = completeness(candidates[right]) - completeness(candidates[left]);
       return scoreDifference || candidates[left].id.localeCompare(candidates[right].id);

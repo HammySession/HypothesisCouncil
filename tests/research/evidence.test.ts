@@ -60,10 +60,7 @@ describe('verifyEvidence', () => {
       ],
       packet
     );
-    expect(result.map((entry) => entry.verification)).toEqual([
-      'not-applicable',
-      'not-applicable',
-    ]);
+    expect(result.map((entry) => entry.verification)).toEqual(['not-applicable', 'not-applicable']);
   });
 });
 
@@ -94,5 +91,21 @@ describe('evidence summaries', () => {
       ])
     ).toBe(false);
     expect(lacksVerifiedContextEvidence(undefined)).toBe(true);
+  });
+});
+
+describe('source-backed evidence', () => {
+  it('stays unverified until a sources stage can check it, and is described separately', () => {
+    const result = verifyEvidence(
+      [{ claim: 'A published measurement', basis: 'source', sourceId: 'S-001' }],
+      packet
+    );
+    expect(result[0]).toMatchObject({
+      basis: 'source',
+      sourceId: 'S-001',
+      verification: 'unverified',
+    });
+    expect(describeEvidence(result)).toBe('1 unverified source');
+    expect(lacksVerifiedContextEvidence(result)).toBe(true);
   });
 });

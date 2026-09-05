@@ -39,17 +39,20 @@ class ScriptedGateway implements ResearchProviderGateway {
     options: ResearchCompletionOptions
   ): Promise<ResearchCompletion> {
     this.prompts.push({ provider, prompt, cwd: options.workingDirectory });
-    if (prompt.startsWith('hypothesis-generation:v3')) {
+    if (prompt.startsWith('hypothesis-generation:v4')) {
       if (provider === 'duck-a') return Promise.resolve({ content: 'not json', model: 'a-model' });
       return Promise.resolve({ content: generation('B'), model: 'b-model' });
     }
-    if (prompt.startsWith('hypothesis-generation-repair:v3')) {
+    if (prompt.startsWith('hypothesis-generation-outofbox:v1')) {
+      return Promise.resolve({ content: generation('C'), model: `${provider}-model` });
+    }
+    if (prompt.startsWith('hypothesis-generation-repair:v4')) {
       return Promise.resolve({ content: generation('A'), model: 'a-model' });
     }
-    if (prompt.startsWith('blind-review:v3')) {
+    if (prompt.startsWith('blind-review:v4')) {
       return Promise.resolve({ content: review(), model: `${provider}-model` });
     }
-    if (prompt.startsWith('falsification:v3')) {
+    if (prompt.startsWith('falsification:v4')) {
       return Promise.resolve({ content: falsification(), model: `${provider}-model` });
     }
     if (prompt.startsWith('session-grounded-ask:v3')) {
@@ -70,10 +73,18 @@ function generation(prefix: string): string {
           ['Cache eviction ordering', 'Delayed eviction messages preserve stale records'],
           ['Temporal clock drift', 'Clock drift reverses event ordering across nodes'],
         ]
-      : [
-          ['Selection sampling bias', 'Biased sampling overrepresents successful observations'],
-          ['Queue contention burst', 'Queue contention creates correlated latency bursts'],
-        ];
+      : prefix === 'C'
+        ? [
+            ['Thermal throttling cascade', 'Thermal throttling cascades across replica hardware'],
+            [
+              'Garbage collection alignment',
+              'Aligned garbage collection pauses synchronize stalls',
+            ],
+          ]
+        : [
+            ['Selection sampling bias', 'Biased sampling overrepresents successful observations'],
+            ['Queue contention burst', 'Queue contention creates correlated latency bursts'],
+          ];
   const evidence =
     prefix === 'A'
       ? [
@@ -194,20 +205,115 @@ describe('HypothesisCouncilService', () => {
     });
 
     const generationPrompts = gateway.prompts.filter((item) =>
-      item.prompt.startsWith('hypothesis-generation:v3')
+      item.prompt.startsWith('hypothesis-generation:v4')
     );
     expect(generationPrompts).toHaveLength(2);
     expect(generationPrompts[0].prompt).toBe(generationPrompts[1].prompt);
     for (const call of gateway.prompts.filter((item) =>
-      item.prompt.startsWith('blind-review:v3')
+      item.prompt.startsWith('blind-review:v4')
     )) {
       expect(call.prompt).not.toContain('authorProvider');
       expect(call.cwd).toContain(session.id);
     }
+    expect(
+      gateway.prompts.some((item) => item.prompt.startsWith('hypothesis-generation-outofbox'))
+    ).toBe(false);
+    expect(session.config.dials).toEqual({
+      novelty: 5,
+      skepticism: 5,
+      origins: { novelty: 'default', skepticism: 'default' },
+    });
+    expect(session.config.policy?.falsificationRounds).toBe(1);
+    expect(markdown).toContain('## Session configuration');
+    expect(markdown).toContain('Novelty: 5/10 (default) · Skepticism: 5/10 (default)');
 
     await expect(service.ask(session.id, 'What evidence matters most?')).resolves.toBe(
       'A grounded answer.'
     );
+  });
+
+  it('adds one sealed out-of-the-box generation call per provider at high novelty', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hc-novelty-'));
+    const gateway = new ScriptedGateway();
+    const service = new HypothesisCouncilService(gateway, new ResearchSessionStore(root));
+    const repository = mkdtempSync(join(tmpdir(), 'hc-novelty-repo-'));
+    writeFileSync(join(repository, 'README.md'), '# Evidence\nObserved failures cluster at open.');
+
+    const session = await service.run({
+      goal: 'Explain the observed failure mode',
+      contextRoot: repository,
+      contextPaths: ['.'],
+      hypothesesPerProvider: 2,
+      topK: 1,
+      seed: 7,
+      dials: { novelty: 10 },
+    });
+
+    expect(session.status).toBe('completed');
+    expect(session.config.dials).toEqual({
+      novelty: 10,
+      skepticism: 5,
+      origins: { novelty: 'flag', skepticism: 'default' },
+    });
+    expect(session.config.policy).toMatchObject({ outOfBoxCalls: 1, outOfBoxHypotheses: 2 });
+    const outOfBoxPrompts = gateway.prompts.filter((item) =>
+      item.prompt.startsWith('hypothesis-generation-outofbox:v1')
+    );
+    expect(outOfBoxPrompts.map((item) => item.provider).sort()).toEqual(['duck-a', 'duck-b']);
+    expect(outOfBoxPrompts[0].prompt).toBe(outOfBoxPrompts[1].prompt);
+    expect(outOfBoxPrompts[0].prompt).toContain('NOVELTY GUIDANCE (high)');
+    expect(session.calls.filter((call) => call.stage === 'generation-outofbox')).toHaveLength(2);
+    const outOfBox = session.candidates.filter((item) => item.variant === 'out-of-box');
+    expect(outOfBox).toHaveLength(4);
+    expect(session.candidates.filter((item) => item.variant !== 'out-of-box')).toHaveLength(4);
+    expect(session.reviews.length).toBeGreaterThanOrEqual(4);
+    const markdown = readFileSync(session.reportMarkdownPath!, 'utf8');
+    expect(markdown).toContain('Novelty: 10/10 (flag)');
+    expect(markdown).toContain('plus 1 out-of-the-box call per provider requesting 2');
+    expect(readFileSync(session.reportJsonPath!, 'utf8')).not.toContain('authorProvider');
+  });
+
+  it('runs two independent falsification rounds per finalist at high skepticism', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hc-skeptic-'));
+    const gateway = new ScriptedGateway();
+    const service = new HypothesisCouncilService(gateway, new ResearchSessionStore(root));
+    const repository = mkdtempSync(join(tmpdir(), 'hc-skeptic-repo-'));
+    writeFileSync(join(repository, 'README.md'), '# Evidence\nObserved failures cluster at open.');
+
+    const session = await service.run({
+      goal: 'Explain the observed failure mode',
+      contextRoot: repository,
+      contextPaths: ['.'],
+      hypothesesPerProvider: 2,
+      topK: 1,
+      seed: 7,
+      dials: { skepticism: 10, origins: { skepticism: 'env' } },
+    });
+
+    expect(session.status).toBe('completed');
+    expect(session.config.dials?.origins).toEqual({ novelty: 'default', skepticism: 'env' });
+    expect(session.config.policy).toMatchObject({
+      falsificationRounds: 2,
+      unverifiedFinalistGate: true,
+    });
+    expect(session.falsifications).toHaveLength(2);
+    expect(session.falsifications.map((item) => item.round).sort()).toEqual([1, 2]);
+    expect(new Set(session.falsifications.map((item) => item.hypothesisId)).size).toBe(1);
+    expect(new Set(session.falsifications.map((item) => item.reviewerProvider)).size).toBe(2);
+    const finalist = session.candidates.find((item) => item.rank === 1);
+    expect(finalist?.authorProvider).toBe('duck-b');
+    expect(
+      session.warnings.some((warning) => /Falsification round 2 for H-\d{3}/.test(warning))
+    ).toBe(true);
+    const secondRound = gateway.prompts.filter(
+      (item) =>
+        item.prompt.startsWith('falsification:v4') && item.prompt.includes('attack number 2')
+    );
+    expect(secondRound).toHaveLength(1);
+    const markdown = readFileSync(session.reportMarkdownPath!, 'utf8');
+    expect(markdown).toContain('Adversarial round 2 competing explanation');
+    expect(markdown).toContain('## Weakly supported claims');
+    expect(markdown).toContain('Falsification rounds per finalist: 2');
   });
 
   it('retries a blank generation reply once with the same sealed prompt', async () => {
@@ -219,7 +325,7 @@ describe('HypothesisCouncilService', () => {
         prompt: string,
         options: ResearchCompletionOptions
       ): Promise<ResearchCompletion> {
-        if (provider === 'duck-a' && prompt.startsWith('hypothesis-generation:v3')) {
+        if (provider === 'duck-a' && prompt.startsWith('hypothesis-generation:v4')) {
           this.prompts.push({ provider, prompt, cwd: options.workingDirectory });
           this.blankGenerations++;
           return Promise.resolve(
@@ -254,7 +360,7 @@ describe('HypothesisCouncilService', () => {
     );
     expect(session.calls.some((call) => call.stage === 'generation-repair')).toBe(false);
     const generationPrompts = gateway.prompts.filter(
-      (item) => item.provider === 'duck-a' && item.prompt.startsWith('hypothesis-generation:v3')
+      (item) => item.provider === 'duck-a' && item.prompt.startsWith('hypothesis-generation:v4')
     );
     expect(generationPrompts).toHaveLength(2);
     expect(generationPrompts[0].prompt).toBe(generationPrompts[1].prompt);
@@ -281,10 +387,41 @@ describe('HypothesisCouncilService previews and progress', () => {
     expect(preview.providers).toEqual(['duck-a', 'duck-b']);
     expect(preview.minProviders).toBe(2);
     expect(preview.hypothesesPerProvider).toBe(2);
-    expect(preview.plannedCalls).toEqual({ generation: 2, review: 4, falsification: 1, total: 7 });
+    expect(preview.plannedCalls).toEqual({
+      generation: 2,
+      outOfBox: 0,
+      review: 4,
+      falsification: 1,
+      falsificationRounds: 1,
+      total: 7,
+    });
+    expect(preview.dials).toEqual({
+      novelty: 5,
+      skepticism: 5,
+      origins: { novelty: 'default', skepticism: 'default' },
+    });
+    expect(preview.policy).toMatchObject({ novelty: 5, skepticism: 5, crowdingPenalty: 0 });
     expect(preview.contextManifest.files.map((file) => file.path)).toEqual(['README.md']);
     expect(store.list()).toEqual([]);
     expect(gateway.prompts).toEqual([]);
+
+    const ambitious = await service.preview({
+      goal: 'Explain it',
+      contextRoot: repository,
+      contextPaths: ['.'],
+      hypothesesPerProvider: 2,
+      topK: 1,
+      dials: { novelty: 'high', skepticism: 9 },
+    });
+    expect(ambitious.plannedCalls).toEqual({
+      generation: 2,
+      outOfBox: 2,
+      review: 6,
+      falsification: 2,
+      falsificationRounds: 2,
+      total: 12,
+    });
+    expect(ambitious.dials).toMatchObject({ novelty: 8, skepticism: 9 });
   });
 
   it('emits started and finished progress events that never name reviewers', async () => {
@@ -324,5 +461,36 @@ describe('HypothesisCouncilService previews and progress', () => {
     expect(reviewSubjects.length).toBeGreaterThan(0);
     expect(reviewSubjects.every((subject) => /^H-\d{3}$/.test(subject))).toBe(true);
     expect(events.at(-1)).toMatchObject({ stage: 'completed', completed: 1, total: 1 });
+  });
+});
+
+describe('HypothesisCouncilService asks and metadata', () => {
+  it('copies meta onto the session and keeps call records from parallel asks', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hc-ask-'));
+    const store = new ResearchSessionStore(root);
+    const service = new HypothesisCouncilService(new ScriptedGateway(), store);
+    const repository = mkdtempSync(join(tmpdir(), 'hc-ask-repo-'));
+    writeFileSync(join(repository, 'README.md'), '# Evidence');
+
+    const session = await service.run({
+      goal: 'Explain it',
+      contextRoot: repository,
+      contextPaths: ['.'],
+      hypothesesPerProvider: 2,
+      topK: 1,
+      meta: { tags: ['cache'], title: 'Cache drift' },
+    });
+    expect(session.meta).toEqual({ tags: ['cache'], title: 'Cache drift' });
+    expect(store.load(session.id).meta).toEqual({ tags: ['cache'], title: 'Cache drift' });
+
+    const answers = await Promise.all([
+      service.ask(session.id, 'Which wins?', 'duck-a'),
+      service.ask(session.id, 'Which loses?', 'duck-b'),
+    ]);
+    expect(answers).toEqual(['A grounded answer.', 'A grounded answer.']);
+    const asks = store.load(session.id).calls.filter((call) => call.stage === 'ask');
+    expect(asks.map((call) => call.provider).sort()).toEqual(['duck-a', 'duck-b']);
+    expect(asks.every((call) => call.id.startsWith(`ask-${call.provider}-`))).toBe(true);
+    expect(asks.every((call) => call.success && call.rawPath)).toBe(true);
   });
 });

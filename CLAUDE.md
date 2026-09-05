@@ -10,6 +10,18 @@
 - `src/cli/` and `src/server.ts` are presentation adapters over the shared research service.
   Council presets (`src/cli/presets.ts`) and `hc doctor` are CLI concerns; they configure
   Rubber Duck through its public environment variables only.
+- `src/executor/` is the only module that spawns vendor CLIs directly (the research-proposal
+  handoff runs one executor with repository access there); `src/research/` never imports it,
+  and executor profiles are configured through `HYPOTHESIS_COUNCIL_EXECUTOR_*` variables only.
+- Model discovery and selection (`src/cli/model-discovery.ts`, `src/cli/model-selection.ts`) are
+  CLI concerns. Discovery reads vendor catalog files field by field and spawns only read-only
+  listing commands; vendor credentials are never copied into the council's model cache.
+- The settings schema lives in `src/research/settings.ts`; `src/cli/settings-command.ts` maps
+  flags and environment variables onto it with the precedence flag > environment > file > default.
+- Web scouts (`src/rubber-duck/scout-profiles.ts`) are Rubber Duck custom CLI providers named
+  `*_scout` or `*-scout`. The name is the contract: such a provider is web-enabled, runs only in
+  the sources stage, and is never seated on the council. The per-record `scoutProvider` field is
+  private and must be stripped from public output.
 - `src/rubber-duck/stdin-shim.ts` is a vendor-CLI wrapper Rubber Duck launches for CLIs that
   cannot read a prompt from stdin; it must stay dependency-free and testable through
   `stdin-shim-core.ts` with fake commands.

@@ -7,7 +7,7 @@ import { spawn } from 'child_process';
  * All report text is HTML-escaped, so hypothesis content can never inject markup.
  */
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

@@ -8,12 +8,20 @@ import {
   runSummaryText,
   statusText,
 } from '../../src/cli/format.js';
+import { DEFAULT_DIAL_POLICY, resolveDialPolicy } from '../../src/research/dials.js';
 import type {
+  DialConfig,
   HypothesisCandidate,
   HypothesisReview,
   ResearchRunPreview,
   ResearchSession,
 } from '../../src/research/types.js';
+
+const DEFAULT_DIAL_CONFIG: DialConfig = {
+  novelty: 5,
+  skepticism: 5,
+  origins: { novelty: 'default', skepticism: 'default' },
+};
 
 function candidate(id: string, rank: number, score: number): HypothesisCandidate {
   return {
@@ -131,7 +139,24 @@ describe('CLI formatting', () => {
 
   it('lists warnings and verdicts in status and candidate views', () => {
     expect(statusText(session())).toContain('  - duck-b returned 1/2 requested hypotheses');
+    expect(statusText(session())).not.toContain('Dials:');
     expect(candidatesText(session())).toContain('[review 7.50 · accept · novelty 7]');
+  });
+
+  it('shows recorded dials, penalties, and out-of-the-box batches', () => {
+    const current = session();
+    current.config.dials = {
+      novelty: 8,
+      skepticism: 5,
+      origins: { novelty: 'file', skepticism: 'default' },
+    };
+    current.candidates[1].variant = 'out-of-box';
+    current.candidates[1].scorePenalties = { unsupportedEvidence: 1 };
+
+    expect(statusText(current)).toContain('Dials: novelty 8/10 (high) · skepticism 5/10 (medium)');
+    const list = candidatesText(current);
+    expect(list).toContain('unsupported evidence · out-of-the-box');
+    expect(candidateText(current, 'H-001')).toContain('Status: distinct · out-of-the-box batch');
   });
 
   it('marks untestable falsifiers, consensus crowding, and evidence provenance', () => {
@@ -145,7 +170,12 @@ describe('CLI formatting', () => {
     current.reviews[0].killCriterion = 'untestable';
     current.candidates[0].differsFromConsensus = 'Predicts an inverse correlation under load';
     current.candidates[0].evidence = [
-      { claim: 'grounded', basis: 'context', contextQuote: 'quoted words', verification: 'verified' },
+      {
+        claim: 'grounded',
+        basis: 'context',
+        contextQuote: 'quoted words',
+        verification: 'verified',
+      },
       { claim: 'literature memory', basis: 'general-knowledge', verification: 'not-applicable' },
     ];
 
@@ -166,7 +196,16 @@ describe('CLI formatting', () => {
       minProviders: 2,
       hypothesesPerProvider: 3,
       topK: 3,
-      plannedCalls: { generation: 2, review: 6, falsification: 3, total: 11 },
+      plannedCalls: {
+        generation: 2,
+        outOfBox: 0,
+        review: 6,
+        falsification: 3,
+        falsificationRounds: 1,
+        total: 11,
+      },
+      dials: DEFAULT_DIAL_CONFIG,
+      policy: DEFAULT_DIAL_POLICY,
       contextManifest: session().contextManifest,
       contextBudget: {
         maxBytes: 4096,
@@ -190,11 +229,31 @@ describe('CLI formatting', () => {
     const lines = runPreviewLines(preview);
 
     expect(lines).toContain('Providers: duck-a, duck-b (at least 2 must be ready)');
+    expect(lines).toContain('Dials: novelty 5/10 (default) · skepticism 5/10 (default)');
     expect(lines).toContain(
       'Planned provider calls: 11 (2 generation × 3 hypotheses, up to 6 reviews, 3 falsifications), plus repairs and retries when needed'
     );
     expect(lines.find((line) => line.startsWith('Shared context budget'))).toContain(
       'argument transport'
+    );
+
+    const ambitious: ResearchRunPreview = {
+      ...preview,
+      plannedCalls: {
+        generation: 2,
+        outOfBox: 2,
+        review: 10,
+        falsification: 6,
+        falsificationRounds: 2,
+        total: 20,
+      },
+      dials: { novelty: 9, skepticism: 8, origins: { novelty: 'flag', skepticism: 'env' } },
+      policy: resolveDialPolicy({ novelty: 9, skepticism: 8 }, 3),
+    };
+    const ambitiousLines = runPreviewLines(ambitious);
+    expect(ambitiousLines).toContain('Dials: novelty 9/10 (flag) · skepticism 8/10 (env)');
+    expect(ambitiousLines).toContain(
+      'Planned provider calls: 20 (2 generation × 3 hypotheses, 2 out-of-the-box × 2, up to 10 reviews, 6 falsifications over 2 rounds), plus repairs and retries when needed'
     );
   });
 
@@ -205,7 +264,16 @@ describe('CLI formatting', () => {
       minProviders: 1,
       hypothesesPerProvider: 3,
       topK: 3,
-      plannedCalls: { generation: 1, review: 3, falsification: 3, total: 7 },
+      plannedCalls: {
+        generation: 1,
+        outOfBox: 0,
+        review: 3,
+        falsification: 3,
+        falsificationRounds: 1,
+        total: 7,
+      },
+      dials: DEFAULT_DIAL_CONFIG,
+      policy: DEFAULT_DIAL_POLICY,
       contextManifest: {
         ...session().contextManifest,
         unmatchedRequestedPaths: ['notes/*.txt', 'missing.md'],
@@ -230,6 +298,7 @@ describe('CLI formatting', () => {
     expect(errorHints('Preflight found 1 usable providers; 2 required')[0]).toContain('--probe');
     expect(errorHints('No current research session')[0]).toContain('hc run');
     expect(errorHints('Unknown preset: nope')[0]).toContain('hc presets');
+    expect(errorHints('Unknown setting: nope')[0]).toContain('hc settings help');
     expect(errorHints('something else')).toEqual([]);
   });
 });

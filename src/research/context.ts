@@ -107,6 +107,8 @@ const ROOT_PRIORITY_FILES = new Set([
 export interface ContextBuildOptions {
   markdownOnly?: boolean;
   maxFileBytes?: number;
+  /** Bytes of `maxBytes` to hold back from files for an appendix added later with `withAppendix`. */
+  reserveBytes?: number;
 }
 
 export interface BuiltContext {
@@ -291,7 +293,9 @@ function collectFiles(
       value: value.split(sep).join('/'),
       resolved: isGlobPattern(value) ? undefined : resolve(cwd, value),
     }))
-    .sort((left, right) => (left.resolved ?? left.value).localeCompare(right.resolved ?? right.value));
+    .sort((left, right) =>
+      (left.resolved ?? left.value).localeCompare(right.resolved ?? right.value)
+    );
   for (const request of requests) {
     eligibleMatches = 0;
     if (request.resolved !== undefined) visit(request.resolved);
@@ -369,10 +373,15 @@ export function buildContextPacket(
   ) {
     throw new Error('maxFileBytes must be a positive integer');
   }
+  const reserveBytes = options.reserveBytes ?? 0;
+  if (!Number.isInteger(reserveBytes) || reserveBytes < 0 || reserveBytes >= maxBytes) {
+    throw new Error('reserveBytes must be a non-negative integer smaller than maxBytes');
+  }
+  const fileBudget = maxBytes - reserveBytes;
   const collected = collectFiles(requestedPaths, cwd, options.markdownOnly === true);
-  const repositoryManifest = buildRepositoryManifest(collected.files, maxBytes);
+  const repositoryManifest = buildRepositoryManifest(collected.files, fileBudget);
   const manifestSeparator = repositoryManifest ? 2 : 0;
-  const availableAfterManifest = maxBytes - byteLength(repositoryManifest) - manifestSeparator;
+  const availableAfterManifest = fileBudget - byteLength(repositoryManifest) - manifestSeparator;
   const maxFileBytes = options.maxFileBytes ?? Number.MAX_SAFE_INTEGER;
   let selected = collected.files.filter((file) => file.textBytes.byteLength > 0);
 
@@ -439,21 +448,49 @@ export function buildContextPacket(
   const packetParts = [repositoryManifest, ...sections].filter(Boolean);
   const packet = packetParts.join('\n\n') || '(No research context files supplied.)';
   const packetBytes = byteLength(packet);
-  if (packetBytes > maxBytes) {
-    throw new Error(`Context packet exceeded its ${maxBytes}-byte budget`);
+  if (packetBytes > fileBudget) {
+    throw new Error(`Context packet exceeded its ${fileBudget}-byte budget`);
+  }
+  const manifest: ContextManifest = {
+    files: records,
+    deniedPaths: [...new Set(collected.deniedPaths)].sort(),
+    omittedPaths: [...new Set(collected.omittedPaths)].sort(),
+    unmatchedRequestedPaths: [...new Set(collected.unmatchedRequestedPaths)].sort(),
+    totalBytes,
+    includedBytes,
+    packetBytes,
+    maxBytes,
+    packetSha256: sha256(packet),
+  };
+  if (reserveBytes > 0) manifest.reservedBytes = reserveBytes;
+  return { packet, manifest };
+}
+
+export const EMPTY_PACKET_NOTICE = '(No research context files supplied.)';
+
+/**
+ * Append a block (the SOURCES section) to a built packet and re-seal the manifest: the packet
+ * bytes and SHA-256 describe what providers actually receive. Throws when the result exceeds the
+ * manifest's byte budget, so callers trim the appendix first.
+ */
+export function withAppendix(built: BuiltContext, appendix: string): BuiltContext {
+  const body = appendix.trim();
+  if (!body) return built;
+  // End with a newline so the persisted packet file is byte-for-byte what the manifest seals.
+  const packet = `${[built.packet.trimEnd(), body].join('\n\n')}\n`;
+  const packetBytes = byteLength(packet);
+  if (packetBytes > built.manifest.maxBytes) {
+    throw new Error(
+      `Context packet with appendix exceeded its ${built.manifest.maxBytes}-byte budget`
+    );
   }
   return {
     packet,
     manifest: {
-      files: records,
-      deniedPaths: [...new Set(collected.deniedPaths)].sort(),
-      omittedPaths: [...new Set(collected.omittedPaths)].sort(),
-      unmatchedRequestedPaths: [...new Set(collected.unmatchedRequestedPaths)].sort(),
-      totalBytes,
-      includedBytes,
+      ...built.manifest,
       packetBytes,
-      maxBytes,
       packetSha256: sha256(packet),
+      appendixBytes: byteLength(body),
     },
   };
 }

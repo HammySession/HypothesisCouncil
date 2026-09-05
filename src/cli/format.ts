@@ -1,4 +1,5 @@
 import { describeEvidence } from '../research/evidence.js';
+import { describeDials } from '../research/settings.js';
 import type {
   HypothesisCandidate,
   ResearchRunPreview,
@@ -28,6 +29,27 @@ export function normalizeCandidateId(value: string): string {
   return `H-${match[1].padStart(3, '0')}`;
 }
 
+/** Fixed-width text table; columns are padded to the widest cell and trailing spaces trimmed. */
+export function table(headers: string[], rows: string[][]): string[] {
+  const widths = headers.map((header, index) =>
+    Math.max(header.length, ...rows.map((row) => row[index].length))
+  );
+  const render = (row: string[]) =>
+    row
+      .map((cell, index) => cell.padEnd(widths[index]))
+      .join('  ')
+      .trimEnd();
+  return [render(headers), ...rows.map(render)];
+}
+
+export function sessionsText(sessions: ResearchSession[]): string {
+  return (
+    sessions
+      .map((session) => `${session.id}  ${stageLabel(session)}  ${session.goal}`)
+      .join('\n') || 'No sessions yet.'
+  );
+}
+
 export function stageLabel(session: ResearchSession): string {
   if (session.status === 'failed') return 'NEEDS ATTENTION';
   if (session.status === 'interrupted') return 'INTERRUPTED';
@@ -49,8 +71,18 @@ export function statusText(session: ResearchSession): string {
     `Goal: ${session.goal}`,
     `Providers: ${session.providers.length}/${session.config.providers.length} ready`,
     `Context: ${formatBytes(packetBytes)}/${formatBytes(session.config.maxContextBytes)}${session.config.markdownOnly ? ' · Markdown only' : ''}`,
-    `Candidates: ${session.candidates.length} raw | ${distinct} distinct | ${session.reviews.length} reviewed | ${session.falsifications.length} falsified`,
   ];
+  if (session.config.dials) lines.push(`Dials: ${describeDials(session.config.dials)}`);
+  if (session.config.sources) {
+    const sources = session.sources ?? [];
+    const reachable = sources.filter((source) => source.verification?.status === 'reachable');
+    lines.push(
+      `Sources: ${sources.length} record${sources.length === 1 ? '' : 's'}${session.sourcesCompletedAt ? ` (${reachable.length} reachable)` : ' (sources stage pending)'} · scouts: ${session.config.sources.scouts.length > 0 ? session.config.sources.scouts.join(', ') : 'none'} · web ${session.config.sources.web}`
+    );
+  }
+  lines.push(
+    `Candidates: ${session.candidates.length} raw | ${distinct} distinct | ${session.reviews.length} reviewed | ${session.falsifications.length} falsified`
+  );
   if (session.stage === 'generating' && session.candidates.length === 0) {
     lines.push('Candidates are sealed until independent generation completes.');
   }
@@ -76,6 +108,8 @@ export function candidatesText(session: ResearchSession): string {
       review ? `novelty ${review.novelty}` : '',
       review?.killCriterion === 'untestable' ? 'untestable falsifier' : '',
       crowded.has(candidate.id) ? 'crowded' : '',
+      candidate.scorePenalties?.unsupportedEvidence ? 'unsupported evidence' : '',
+      candidate.variant === 'out-of-box' ? 'out-of-the-box' : '',
     ].filter(Boolean);
     return `${rank.padEnd(4)} ${candidate.id.padEnd(6)} ${candidate.title}  [review ${score}${review ? ` · ${review.verdict}` : ''}${markers.length ? ` · ${markers.join(' · ')}` : ''}]`;
   });
@@ -86,10 +120,10 @@ export function candidateText(session: ResearchSession, candidateId: string): st
   const candidate = session.candidates.find((item) => item.id === candidateId);
   if (!candidate) throw new Error(`Candidate not found: ${candidateId}`);
   const review = session.reviews.find((item) => item.hypothesisId === candidate.id);
-  const attack = session.falsifications.find((item) => item.hypothesisId === candidate.id);
+  const attacks = session.falsifications.filter((item) => item.hypothesisId === candidate.id);
   return [
     `${candidate.id} — ${candidate.title}`,
-    `Status: ${candidate.status}${candidate.duplicateOf ? ` of ${candidate.duplicateOf}` : ''}`,
+    `Status: ${candidate.status}${candidate.duplicateOf ? ` of ${candidate.duplicateOf}` : ''}${candidate.variant === 'out-of-box' ? ' · out-of-the-box batch' : ''}`,
     `Claim: ${candidate.claim}`,
     `Mechanism: ${candidate.mechanism}`,
     `Predictions: ${candidate.predictions.join('; ')}`,
@@ -99,7 +133,13 @@ export function candidateText(session: ResearchSession, candidateId: string): st
     `Falsifier: ${candidate.falsifier}${review?.killCriterion ? ` (graded ${review.killCriterion})` : ''}`,
     `Minimal experiment: ${candidate.minimalExperiment}`,
     `Review: ${review?.verdict || 'pending'}${review ? ` — ${review.strongestObjection}` : ''}`,
-    `Adversarial attack: ${attack?.competingExplanation || 'not selected/pending'}`,
+    `Adversarial attack: ${attacks[0]?.competingExplanation || 'not selected/pending'}`,
+    ...attacks
+      .slice(1)
+      .map(
+        (attack) =>
+          `Adversarial attack (round ${attack.round ?? 2}): ${attack.competingExplanation}`
+      ),
   ].join('\n');
 }
 
@@ -109,15 +149,38 @@ export function runPreviewLines(preview: ResearchRunPreview): string[] {
     (provider) => provider.provider === preview.contextBudget.limitingProvider
   );
   const calls = preview.plannedCalls;
+  const callParts = [
+    `${calls.generation} generation × ${preview.hypothesesPerProvider} hypotheses`,
+  ];
+  if (calls.outOfBox > 0) {
+    callParts.push(`${calls.outOfBox} out-of-the-box × ${preview.policy.outOfBoxHypotheses}`);
+  }
+  callParts.push(`up to ${calls.review} reviews`);
+  callParts.push(
+    `${calls.falsification} falsifications${calls.falsificationRounds > 1 ? ` over ${calls.falsificationRounds} rounds` : ''}`
+  );
+  if (calls.sourcing) callParts.push(`${calls.sourcing} sourcing`);
   const lines = [
     `Goal: ${preview.goal}`,
     `Repository: ${preview.contextRoot}`,
     `Providers: ${preview.providers.join(', ')} (at least ${preview.minProviders} must be ready)`,
+    `Dials: novelty ${preview.dials.novelty}/10 (${preview.dials.origins.novelty}) · skepticism ${preview.dials.skepticism}/10 (${preview.dials.origins.skepticism})`,
     `Context mode: ${preview.markdownOnly ? 'Markdown files only' : 'supported text and code files'}`,
     `Shared context budget: ${formatBytes(preview.contextBudget.maxBytes)}; limited by ${preview.contextBudget.limitingProvider}${limit ? ` (${limit.model}, ${limit.contextWindowTokens.toLocaleString()} tokens${limit.transportLimited ? ', argument transport' : ''})` : ''}`,
     `Context preview: ${manifest.files.length} files contribute ${formatBytes(manifest.includedBytes)}; packet ${formatBytes(manifest.packetBytes)}/${formatBytes(manifest.maxBytes)}; denied ${manifest.deniedPaths.length}; omitted ${manifest.omittedPaths.length}`,
-    `Planned provider calls: ${calls.total} (${calls.generation} generation × ${preview.hypothesesPerProvider} hypotheses, up to ${calls.review} reviews, ${calls.falsification} falsifications), plus repairs and retries when needed`,
+    `Planned provider calls: ${calls.total} (${callParts.join(', ')}), plus repairs and retries when needed`,
   ];
+  const sources = preview.sourcesPlan;
+  if (sources) {
+    const scouts =
+      sources.scouts.length > 0
+        ? `${sources.scouts.join(', ')} (${sources.rounds} round${sources.rounds === 1 ? '' : 's'} × ${sources.sourcesPerScout} sources each)`
+        : 'none';
+    lines.push(
+      `Sources: ${sources.userSources} supplied${sources.sourcesFile ? ` from ${sources.sourcesFile}` : ''}; web scouts: ${scouts}; verification: ${sources.verification}; critique: ${sources.critique ? 'on' : 'off'}; ${formatBytes(sources.reservedBytes)} reserved for the SOURCES appendix`
+    );
+    if (sources.web === 'off') lines.push('Web: off (no scouting, no URL fetches).');
+  }
   for (const path of manifest.unmatchedRequestedPaths ?? []) {
     lines.push(
       `Warning: context path "${path}" matched no eligible files (missing, denied, or unsupported type).`
@@ -191,5 +254,14 @@ export function errorHints(message: string): string[] {
     hints.push('Run `hc run` to start a session, or `hc sessions` to list existing ones.');
   }
   if (/Unknown preset/i.test(message)) hints.push('Run `hc presets` to list available presets.');
+  if (/Unknown setting/i.test(message)) hints.push('Run `hc settings help` to list the settings.');
+  if (
+    /model/i.test(message) &&
+    /not found|unknown|invalid|unsupported|does not exist/i.test(message)
+  ) {
+    hints.push(
+      'Run `hc models --refresh` to re-discover vendor models, or pin one with --model KEY=ID.'
+    );
+  }
   return hints;
 }

@@ -69,7 +69,7 @@ function session(store: ResearchSessionStore): ResearchSession {
 }
 
 describe('HypothesisCouncilServer', () => {
-  it('exposes only the four project tools and closes operation runtimes', async () => {
+  it('exposes only the project tools and closes operation runtimes', async () => {
     const store = new ResearchSessionStore(mkdtempSync(join(tmpdir(), 'hc-server-')));
     const saved = session(store);
     let closes = 0;
@@ -78,13 +78,16 @@ describe('HypothesisCouncilServer', () => {
     const runtimeFactory = (): CouncilRuntime =>
       ({
         service: { ask, run } as never,
+        proposals: {} as never,
         gateway: {} as never,
         close: () => {
           closes++;
           return Promise.resolve();
         },
       }) as CouncilRuntime;
-    const server = new HypothesisCouncilServer(store, runtimeFactory);
+    const server = new HypothesisCouncilServer(store, runtimeFactory, {
+      HYPOTHESIS_COUNCIL_SKEPTICISM: 'high',
+    });
     const client = new Client({ name: 'server-test', version: '1' });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -95,6 +98,9 @@ describe('HypothesisCouncilServer', () => {
       'duck_hypothesis_council',
       'duck_hypothesis_report',
       'duck_hypothesis_status',
+      'duck_research_proposal',
+      'duck_research_proposal_answer',
+      'duck_research_proposal_report',
     ]);
 
     const status = await client.callTool({
@@ -109,6 +115,7 @@ describe('HypothesisCouncilServer', () => {
         goal: 'New goal',
         providers: ['duck'],
         hypotheses_per_provider: 2,
+        novelty: 'low',
       },
     });
     expect(JSON.stringify(started.content)).toContain(saved.id);
@@ -117,10 +124,22 @@ describe('HypothesisCouncilServer', () => {
         goal: 'New goal',
         providers: ['duck'],
         hypothesesPerProvider: 2,
+        dials: {
+          novelty: 2,
+          skepticism: 8,
+          origins: { novelty: 'flag', skepticism: 'env' },
+        },
       }),
       undefined,
       expect.any(AbortSignal)
     );
+
+    const rejected = await client.callTool({
+      name: 'duck_hypothesis_council',
+      arguments: { goal: 'Bad dial', novelty: 11 },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected.content)).toContain('novelty must be an integer from 0 to 10');
 
     const answer = await client.callTool({
       name: 'duck_hypothesis_ask',
@@ -131,6 +150,54 @@ describe('HypothesisCouncilServer', () => {
     expect(closes).toBe(2);
 
     expect(readFileSync(saved.reportMarkdownPath!, 'utf8')).toContain('# Report');
+    await client.close();
+    await server.stop();
+  });
+
+  it('passes sources, scouts, and the web switch through to the research service', async () => {
+    const store = new ResearchSessionStore(mkdtempSync(join(tmpdir(), 'hc-server-')));
+    const saved = session(store);
+    const run = jest.fn(() => Promise.resolve(saved));
+    const runtimeFactory = (): CouncilRuntime =>
+      ({
+        service: { run } as never,
+        proposals: {} as never,
+        gateway: {} as never,
+        close: () => Promise.resolve(),
+      }) as CouncilRuntime;
+    const server = new HypothesisCouncilServer(store, runtimeFactory, {});
+    const client = new Client({ name: 'server-test', version: '1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.start(serverTransport), client.connect(clientTransport)]);
+
+    const started = await client.callTool({
+      name: 'duck_hypothesis_council',
+      arguments: {
+        goal: 'Sourced goal',
+        sources_file: 'docs/sources.md',
+        scouts: ['cli-claude_scout'],
+        web: 'off',
+      },
+    });
+    expect(started.isError).toBeFalsy();
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: 'Sourced goal',
+        sourcesFile: 'docs/sources.md',
+        scouts: ['cli-claude_scout'],
+        web: 'off',
+      }),
+      undefined,
+      expect.any(AbortSignal)
+    );
+
+    const rejected = await client.callTool({
+      name: 'duck_hypothesis_council',
+      arguments: { goal: 'Bad web', web: 'maybe' },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
+
     await client.close();
     await server.stop();
   });

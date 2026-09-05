@@ -3,6 +3,7 @@ import { createRequire } from 'module';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { claudeArgs, codexArgs } from './vendor-args.js';
 
 export interface RubberDuckLaunch {
   command: string;
@@ -105,27 +106,12 @@ export function rubberDuckEnvironment(
   if (environment.HYPOTHESIS_COUNCIL_DISABLE_STDIN_COMPATIBILITY === 'true') {
     return environment;
   }
-  const claudeArgs = [
-    '-p',
-    '--output-format',
-    'json',
-    '--max-turns',
-    '3',
-    '--no-session-persistence',
-    '--permission-mode',
-    'dontAsk',
-  ];
-  if (environment.CLI_CLAUDE_DEFAULT_MODEL) {
-    claudeArgs.push('--model', environment.CLI_CLAUDE_DEFAULT_MODEL);
-  }
-  // Disable Claude Code's built-in tools and ignore user MCP servers so the council prompt is
-  // answered directly instead of spending the turn budget on tool calls.
-  claudeArgs.push('--strict-mcp-config', '--tools', '');
+  // Council members answer from the sealed packet: no built-in tools, no user MCP servers.
   moveDefaultPresetToStdin(environment, 'CLAUDE', {
     COMMAND: 'claude',
     PROMPT_DELIVERY: 'stdin',
     OUTPUT_FORMAT: 'json',
-    CLI_ARGS: claudeArgs.join(','),
+    CLI_ARGS: claudeArgs({ model: environment.CLI_CLAUDE_DEFAULT_MODEL }).join(','),
     PROCESS_TIMEOUT: processTimeout(environment, 'CLAUDE'),
   });
   if (
@@ -138,34 +124,14 @@ export function rubberDuckEnvironment(
       environment.CLI_CODEX_DEFAULT_MODEL = resolvedCodexModel;
     }
   }
-  const codexArgs = [
-    'exec',
-    '--skip-git-repo-check',
-    '--sandbox',
-    'read-only',
-    '--ephemeral',
-    '--color',
-    'never',
-  ];
-  if (environment.CLI_CODEX_DEFAULT_MODEL) {
-    codexArgs.push('--model', environment.CLI_CODEX_DEFAULT_MODEL);
-  }
-  const codexEffort = environment.HYPOTHESIS_COUNCIL_CODEX_REASONING_EFFORT;
-  if (codexEffort) {
-    const supportedEfforts = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
-    if (!supportedEfforts.has(codexEffort)) {
-      throw new Error(
-        'HYPOTHESIS_COUNCIL_CODEX_REASONING_EFFORT must be none, low, medium, high, xhigh, or max'
-      );
-    }
-    codexArgs.push('-c', `model_reasoning_effort="${codexEffort}"`);
-  }
-  codexArgs.push('-');
   moveDefaultPresetToStdin(environment, 'CODEX', {
     COMMAND: 'codex',
     PROMPT_DELIVERY: 'stdin',
     OUTPUT_FORMAT: 'text',
-    CLI_ARGS: codexArgs.join(','),
+    CLI_ARGS: codexArgs({
+      model: environment.CLI_CODEX_DEFAULT_MODEL,
+      reasoningEffort: environment.HYPOTHESIS_COUNCIL_CODEX_REASONING_EFFORT || undefined,
+    }).join(','),
     PROCESS_TIMEOUT: processTimeout(environment, 'CODEX'),
   });
   return environment;

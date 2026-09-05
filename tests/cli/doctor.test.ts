@@ -36,7 +36,7 @@ const environment: NodeJS.ProcessEnv = {
   CLI_CLAUDE_ENABLED: 'true',
   CLI_CUSTOM_GROK_COMMAND: '/node',
   CLI_CUSTOM_GROK_PROMPT_DELIVERY: 'stdin',
-  CLI_CUSTOM_GROK_CLI_ARGS: '/shim.js,prompt-file,--,grok,-m,grok-4.6',
+  CLI_CUSTOM_GROK_CLI_ARGS: '/shim.js,prompt-file,--,grok,-m,grok-4.6,--disable-web-search',
   CLI_GEMINI_ENABLED: 'true',
 };
 
@@ -122,6 +122,44 @@ describe('hc doctor', () => {
     expect(text).toContain('Problems:');
   });
 
+  it('shows how each model was chosen and hints when discovery fell back', async () => {
+    const report = await runDoctor({
+      gateway: new FakeGateway(providers),
+      workingDirectory: '/sessions/doctor',
+      sessionHome: '/sessions',
+      environment,
+      platform: 'linux',
+      locateCommand: (command) => `/bin/${command}`,
+      models: {
+        'cli-claude': {
+          vendor: 'claude',
+          id: 'claude-fable-5[1m]',
+          origin: 'latest',
+          discoveredCount: 2,
+          source: 'vendor-config',
+        },
+        'cli-grok': {
+          vendor: 'grok',
+          id: 'grok-4.6',
+          origin: 'fallback',
+          discoveredCount: 0,
+          note: 'grok is not on PATH',
+        },
+      },
+    });
+
+    const byName = Object.fromEntries(report.providers.map((entry) => [entry.name, entry]));
+    expect(byName['cli-claude'].modelSelection).toMatchObject({ origin: 'latest' });
+    expect(byName['cli-gemini'].modelSelection).toBeUndefined();
+    expect(report.hints).toContain(
+      'cli-grok: model discovery did not produce a choice (grok is not on PATH); using grok-4.6. Run `hc models --refresh` or pin one with --model KEY=ID.'
+    );
+
+    const text = doctorText(report);
+    expect(text).toContain('claude-fable-5[1m] (auto: latest of 2)');
+    expect(text).toContain('grok-4.6 (fallback: grok is not on PATH)');
+  });
+
   it('explains a Rubber Duck that cannot start', async () => {
     const report = await runDoctor({
       gateway: new FakeGateway(new Error('Unable to start the installed Rubber Duck MCP server.')),
@@ -152,5 +190,55 @@ describe('hc doctor', () => {
       'Run `hc doctor --probe` to send a one-line prompt to every provider.'
     );
     expect(doctorText(report)).toContain('No problems found.');
+  });
+
+  it('reports web access and flags scouts and council members on the wrong side of it', async () => {
+    const scoutEnvironment: NodeJS.ProcessEnv = {
+      ...environment,
+      CLI_CUSTOM_GROK_CLI_ARGS: '/shim.js,prompt-file,--,grok,-m,grok-4.6',
+      CLI_CUSTOM_CLAUDE_SCOUT_COMMAND: 'claude',
+      CLI_CUSTOM_CLAUDE_SCOUT_PROMPT_DELIVERY: 'stdin',
+      CLI_CUSTOM_CLAUDE_SCOUT_CLI_ARGS:
+        '-p,--restricted,--strict-mcp-config,--tools,WebSearch,WebFetch,--allowedTools,WebSearch,WebFetch',
+      CLI_CUSTOM_CODEX_SCOUT_COMMAND: 'codex',
+      CLI_CUSTOM_CODEX_SCOUT_CLI_ARGS: 'exec,--sandbox,read-only,-',
+    };
+    const report = await runDoctor({
+      gateway: new FakeGateway([
+        providers[0],
+        providers[2],
+        {
+          name: 'cli-claude_scout',
+          nickname: 'Claude Scout',
+          model: 'claude-fable-5[1m]',
+          type: 'cli',
+        },
+        { name: 'cli-codex_scout', nickname: 'Codex Scout', model: 'gpt-5.6-sol', type: 'cli' },
+      ]),
+      workingDirectory: '/sessions/doctor',
+      sessionHome: '/sessions',
+      environment: scoutEnvironment,
+      platform: 'linux',
+      nodeVersion: 'v24.0.0',
+      rubberDuckVersion: '1.20.5',
+      probe: false,
+      locateCommand: (command) => `/bin/${command}`,
+      now: () => 0,
+    });
+
+    const byName = Object.fromEntries(report.providers.map((entry) => [entry.name, entry]));
+    expect(byName['cli-claude']).toMatchObject({ web: 'off', scout: false });
+    expect(byName['cli-grok']).toMatchObject({ web: 'on', scout: false });
+    expect(byName['cli-claude_scout']).toMatchObject({ web: 'on', scout: true, command: 'claude' });
+    expect(byName['cli-codex_scout']).toMatchObject({ web: 'off', scout: true, command: 'codex' });
+    expect(report.problems).toEqual([
+      'cli-grok: council provider has web access; council members must answer from the sealed packet only (a preset configures this, or name the provider *_scout to make it a scout).',
+      'cli-codex_scout: web scout has web search switched off, so it cannot find sources.',
+    ]);
+
+    const text = doctorText(report);
+    expect(text).toContain('WEB');
+    expect(text).toContain('cli-claude_scout (scout)');
+    expect(text).toContain('cli-codex_scout (scout)');
   });
 });

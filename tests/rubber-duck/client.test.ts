@@ -122,9 +122,10 @@ describe('McpRubberDuckClient', () => {
       ],
     };
 
-    await expect(new McpRubberDuckClient(peer).ask('cli-claude', 'Reply READY')).resolves.toEqual(
-      { content: 'READY', model: 'claude-fable-5[1m]' }
-    );
+    await expect(new McpRubberDuckClient(peer).ask('cli-claude', 'Reply READY')).resolves.toEqual({
+      content: 'READY',
+      model: 'claude-fable-5[1m]',
+    });
   });
 
   it('turns MCP tool errors into exceptions', async () => {

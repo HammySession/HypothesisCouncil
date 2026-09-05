@@ -1,5 +1,5 @@
 import { resolve } from 'path';
-import type { RunResearchInput } from '../research/types.js';
+import type { DialConfig, RunResearchInput, SessionMeta, WebAccess } from '../research/types.js';
 
 export const DEFAULT_REPOSITORY_GOAL =
   'Analyze this repository and generate hypotheses about its design, correctness risks, and highest-value next experiments.';
@@ -15,6 +15,14 @@ export interface RunCliOptions {
   seed?: number;
   maxContextBytes?: number;
   markdownOnly?: boolean;
+  /** Resolved novelty and skepticism dials with their origins. */
+  dials?: DialConfig;
+  /** Sources file (JSON or Markdown), relative to `cwd`. */
+  sourcesFile?: string;
+  /** Scout providers; undefined lets the service pick every `*_scout` provider. */
+  scouts?: string[];
+  web?: WebAccess;
+  meta?: SessionMeta;
 }
 
 export function createRunInput(options: RunCliOptions, cwd = process.cwd()): RunResearchInput {
@@ -30,5 +38,10 @@ export function createRunInput(options: RunCliOptions, cwd = process.cwd()): Run
     seed: options.seed,
     maxContextBytes: options.maxContextBytes,
     markdownOnly: options.markdownOnly === true,
+    dials: options.dials,
+    sourcesFile: options.sourcesFile ? resolve(cwd, options.sourcesFile) : undefined,
+    scouts: options.scouts,
+    web: options.web,
+    meta: options.meta,
   };
 }

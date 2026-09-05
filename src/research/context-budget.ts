@@ -18,30 +18,34 @@ interface ModelLimit {
   reservedOutputTokens: number;
 }
 
-function modelLimit(model: string, provider: string): ModelLimit {
+interface ModelLimitMatch {
+  limit: ModelLimit;
+  /** False when the id matched no rule and the conservative default applies. */
+  matched: boolean;
+}
+
+function known(contextWindowTokens: number, reservedOutputTokens: number): ModelLimitMatch {
+  return { limit: { contextWindowTokens, reservedOutputTokens }, matched: true };
+}
+
+/**
+ * Static context windows by model id. A `[1m]` suffix means a one-million-token profile on any
+ * vendor; bare Claude aliases (`fable`, `opus`, `sonnet`, `haiku`) count as Claude models.
+ */
+function modelLimit(model: string, provider: string): ModelLimitMatch {
   const identity = `${provider} ${model}`.toLowerCase();
-  if (/gpt-5\.(?:4|5|6)/.test(identity)) {
-    return { contextWindowTokens: 1_050_000, reservedOutputTokens: 128_000 };
+  const oneMillion = /\[1m\]/.test(model.toLowerCase());
+  if (/gpt-5\.[4-9]/.test(identity)) return known(1_050_000, 128_000);
+  if (/gpt-5|codex/.test(identity)) return known(400_000, 128_000);
+  if (/gpt-4\.1/.test(identity)) return known(1_047_576, 32_768);
+  if (/gpt-4o/.test(identity)) return known(128_000, 16_384);
+  if (/claude|\b(?:fable|opus|sonnet|haiku)\b/.test(identity)) {
+    return known(oneMillion ? 1_000_000 : 200_000, 32_000);
   }
-  if (/gpt-5|codex/.test(identity)) {
-    return { contextWindowTokens: 400_000, reservedOutputTokens: 128_000 };
-  }
-  if (/gpt-4\.1/.test(identity)) {
-    return { contextWindowTokens: 1_047_576, reservedOutputTokens: 32_768 };
-  }
-  if (/gpt-4o/.test(identity)) {
-    return { contextWindowTokens: 128_000, reservedOutputTokens: 16_384 };
-  }
-  if (/claude/.test(identity)) {
-    return { contextWindowTokens: 200_000, reservedOutputTokens: 32_000 };
-  }
-  if (/gemini/.test(identity)) {
-    return { contextWindowTokens: 1_000_000, reservedOutputTokens: 65_536 };
-  }
-  if (/grok/.test(identity)) {
-    return { contextWindowTokens: 256_000, reservedOutputTokens: 32_000 };
-  }
-  return { contextWindowTokens: 128_000, reservedOutputTokens: 32_000 };
+  if (/gemini/.test(identity)) return known(1_000_000, 65_536);
+  if (/grok/.test(identity)) return known(256_000, 32_000);
+  if (oneMillion) return known(1_000_000, 64_000);
+  return { limit: { contextWindowTokens: 128_000, reservedOutputTokens: 32_000 }, matched: false };
 }
 
 function overrideName(provider: string): string {
@@ -67,9 +71,10 @@ function configuredLimit(
     };
   }
   const knownModel = provider.model !== 'cli' && provider.model !== 'provider-default';
+  const match = modelLimit(provider.model, provider.name);
   return {
-    limit: modelLimit(provider.model, provider.name),
-    source: knownModel ? 'model' : 'provider-default',
+    limit: match.limit,
+    source: knownModel && match.matched ? 'model' : 'provider-default',
   };
 }
 

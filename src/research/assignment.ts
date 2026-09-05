@@ -1,6 +1,5 @@
-import type { HypothesisCandidate } from './types.js';
-
-function stableHash(value: string): number {
+/** FNV-1a 32-bit hash; stable across runs so assignments are reproducible from a seed. */
+export function stableHash(value: string): number {
   let hash = 2166136261;
   for (const character of value) {
     hash ^= character.charCodeAt(0);
@@ -9,18 +8,46 @@ function stableHash(value: string): number {
   return hash >>> 0;
 }
 
-export function assignReviewers(
-  candidates: HypothesisCandidate[],
+export interface Authored {
+  id: string;
+  authorProvider: string;
+}
+
+export interface AssignmentOptions {
+  /**
+   * Providers that must not be assigned to a given item id when any alternative exists, for
+   * example the attacker from an earlier falsification round.
+   */
+  exclude?: ReadonlyMap<string, readonly string[]>;
+}
+
+/**
+ * Give every item a reviewer that is not its author, balancing load across providers. The seed
+ * rotates the starting provider per item so the same council reviews differently across runs.
+ * Excluded providers are avoided before authorship is: a second round prefers a fresh attacker,
+ * even the author, over repeating the first one.
+ */
+export function assignReviewers<T extends Authored>(
+  candidates: T[],
   providers: string[],
-  seed: number
+  seed: number,
+  options: AssignmentOptions = {}
 ): Map<string, string> {
   const orderedProviders = [...providers].sort();
   const counts = new Map(orderedProviders.map((provider) => [provider, 0]));
   const result = new Map<string, string>();
 
   for (const candidate of [...candidates].sort((left, right) => left.id.localeCompare(right.id))) {
+    const excluded = new Set(options.exclude?.get(candidate.id) ?? []);
+    const notExcluded = orderedProviders.filter((provider) => !excluded.has(provider));
     const nonAuthors = orderedProviders.filter((provider) => provider !== candidate.authorProvider);
-    const eligible = nonAuthors.length > 0 ? nonAuthors : orderedProviders;
+    const eligible =
+      [
+        notExcluded.filter((provider) => provider !== candidate.authorProvider),
+        notExcluded,
+        nonAuthors,
+        orderedProviders,
+      ].find((pool) => pool.length > 0) ?? [];
     const offset = stableHash(`${seed}:${candidate.id}`) % Math.max(eligible.length, 1);
     const rotated = [...eligible.slice(offset), ...eligible.slice(0, offset)];
     const selected = rotated.sort((left, right) => {

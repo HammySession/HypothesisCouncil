@@ -3,7 +3,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { z } from 'zod';
+import { publicProposalSnapshot } from './research/proposal/public.js';
+import { renderProposalMarkdown } from './research/proposal/report.js';
+import { proposalStoreFor } from './research/proposal/store.js';
+import type { ProposalSession } from './research/proposal/types.js';
 import { publicSessionSnapshot } from './research/report.js';
+import { dialsFromSettings, resolveSettings, type DialConfig } from './research/settings.js';
+import { loadSettingsFile, settingsPath } from './research/settings-store.js';
 import { ResearchSessionStore } from './research/store.js';
 import { createCouncilRuntime, withCouncilRuntime, type CouncilRuntimeFactory } from './runtime.js';
 
@@ -23,12 +29,15 @@ function errorResult(error: unknown) {
   };
 }
 
+const DialInputSchema = z.union([z.number(), z.string()]).optional();
+
 export class HypothesisCouncilServer {
   private readonly server = new McpServer({ name: 'hypothesis-council', version: '0.1.0' });
 
   constructor(
     private readonly store = new ResearchSessionStore(),
-    private readonly runtimeFactory: CouncilRuntimeFactory = createCouncilRuntime
+    private readonly runtimeFactory: CouncilRuntimeFactory = createCouncilRuntime,
+    private readonly environment: NodeJS.ProcessEnv = process.env
   ) {
     this.registerTools();
   }
@@ -39,6 +48,19 @@ export class HypothesisCouncilServer {
 
   stop(): Promise<void> {
     return this.server.close();
+  }
+
+  /** Tool inputs win, then the environment, then the settings file in the session home. */
+  private resolveDials(input: { novelty?: unknown; skepticism?: unknown }): DialConfig {
+    const filePath = settingsPath(this.store.root);
+    return dialsFromSettings(
+      resolveSettings({
+        flags: { novelty: input.novelty, skepticism: input.skepticism },
+        env: this.environment,
+        file: loadSettingsFile(filePath),
+        filePath,
+      })
+    );
   }
 
   private registerTools(): void {
@@ -64,6 +86,11 @@ export class HypothesisCouncilServer {
             .min(1024)
             .max(16 * 1024 * 1024)
             .optional(),
+          novelty: DialInputSchema,
+          skepticism: DialInputSchema,
+          sources_file: z.string().optional(),
+          scouts: z.array(z.string()).optional(),
+          web: z.enum(['on', 'off']).optional(),
         },
         annotations: {
           readOnlyHint: false,
@@ -74,10 +101,14 @@ export class HypothesisCouncilServer {
       },
       async (input, extra) => {
         try {
+          const dials = this.resolveDials(input);
           const session = await withCouncilRuntime(this.runtimeFactory(this.store), ({ service }) =>
             service.run(
               {
                 goal: input.goal,
+                sourcesFile: input.sources_file,
+                scouts: input.scouts,
+                web: input.web,
                 providers: input.providers,
                 contextPaths: input.context_paths,
                 contextRoot: input.context_root,
@@ -87,6 +118,7 @@ export class HypothesisCouncilServer {
                 minProviders: input.min_providers,
                 seed: input.seed,
                 maxContextBytes: input.max_context_bytes,
+                dials,
               },
               undefined,
               extra.signal
@@ -144,6 +176,129 @@ export class HypothesisCouncilServer {
           const session = this.store.load(input.session_id);
           if (!session.reportMarkdownPath) throw new Error(`Report is not ready for ${session.id}`);
           return textResult(readFileSync(session.reportMarkdownPath, 'utf8'));
+        } catch (error) {
+          return errorResult(error);
+        }
+      }
+    );
+
+    this.server.registerTool(
+      'duck_research_proposal',
+      {
+        title: 'Research Proposal',
+        description:
+          'Start a research proposal on a topic: the council interviews you (answer with duck_research_proposal_answer), drafts independently, critiques blind, and merges one proposal. Returns the public proposal state; with interview=false or answers the proposal is drafted immediately.',
+        inputSchema: {
+          topic: z.string().min(1),
+          providers: z.array(z.string()).optional(),
+          context_paths: z.array(z.string()).optional(),
+          context_root: z.string().optional(),
+          markdown_only: z.boolean().optional(),
+          from_session_id: z.string().optional(),
+          interview: z.boolean().optional(),
+          max_rounds: z.number().int().min(1).max(5).optional(),
+          answers: z.record(z.string().nullable()).optional(),
+          novelty: DialInputSchema,
+          skepticism: DialInputSchema,
+        },
+        annotations: { readOnlyHint: false, openWorldHint: true },
+      },
+      async (input, extra) => {
+        try {
+          const dials = this.resolveDials(input);
+          const session = await withCouncilRuntime(
+            this.runtimeFactory(this.store),
+            async ({ proposals }) => {
+              let current = await proposals.start(
+                {
+                  topic: input.topic,
+                  providers: input.providers,
+                  contextPaths: input.context_paths,
+                  contextRoot: input.context_root,
+                  markdownOnly: input.markdown_only,
+                  fromSessionId: input.from_session_id,
+                  interview: input.interview,
+                  maxRounds: input.max_rounds,
+                  dials,
+                },
+                undefined,
+                extra.signal
+              );
+              if (input.answers && current.stage === 'awaiting-answers') {
+                current = proposals.answer(current.id, input.answers);
+              }
+              if (current.stage === 'interview-complete') {
+                current = await proposals.draft(current.id, undefined, extra.signal);
+              }
+              return current;
+            }
+          );
+          return textResult(JSON.stringify(publicProposalSnapshot(session), null, 2));
+        } catch (error) {
+          return errorResult(error);
+        }
+      }
+    );
+
+    this.server.registerTool(
+      'duck_research_proposal_answer',
+      {
+        title: 'Answer Research Proposal Interview',
+        description:
+          'Answer or skip (null) open interview questions of a research proposal. next_round asks the council for another round once everything is answered; finish ends the interview early; the proposal is drafted as soon as the interview is complete unless draft=false.',
+        inputSchema: {
+          session_id: z.string().optional(),
+          answers: z.record(z.string().nullable()).optional(),
+          next_round: z.boolean().optional(),
+          finish: z.boolean().optional(),
+          draft: z.boolean().optional(),
+        },
+        annotations: { readOnlyHint: false, openWorldHint: true },
+      },
+      async (input, extra) => {
+        try {
+          const session = await withCouncilRuntime(
+            this.runtimeFactory(this.store),
+            async ({ proposals }) => {
+              let current: ProposalSession = proposals.store.load(input.session_id);
+              if (input.answers && Object.keys(input.answers).length > 0) {
+                current = proposals.answer(current.id, input.answers);
+              }
+              if (input.finish && current.stage === 'awaiting-answers') {
+                current = proposals.finishInterview(current.id);
+              }
+              if (input.next_round && current.stage === 'awaiting-answers') {
+                current = await proposals.nextRound(current.id, undefined, extra.signal);
+              }
+              if (current.stage === 'interview-complete' && input.draft !== false) {
+                current = await proposals.draft(current.id, undefined, extra.signal);
+              }
+              return current;
+            }
+          );
+          return textResult(JSON.stringify(publicProposalSnapshot(session), null, 2));
+        } catch (error) {
+          return errorResult(error);
+        }
+      }
+    );
+
+    this.server.registerTool(
+      'duck_research_proposal_report',
+      {
+        title: 'Research Proposal Report',
+        description:
+          'Read the Markdown of a merged research proposal (interview transcript, ranked drafts, and the proposal).',
+        inputSchema: { session_id: z.string().optional() },
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      (input) => {
+        try {
+          const session = proposalStoreFor(this.store).load(input.session_id);
+          if (!session.proposal) {
+            throw new Error(`Proposal is not ready for ${session.id} (stage: ${session.stage})`);
+          }
+          return textResult(renderProposalMarkdown(session));
         } catch (error) {
           return errorResult(error);
         }

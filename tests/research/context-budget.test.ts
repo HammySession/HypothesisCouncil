@@ -84,6 +84,30 @@ describe('calculateContextBudget', () => {
     ).toBe(false);
   });
 
+  it('derives windows from model ids, including 1M profiles and bare Claude aliases', () => {
+    const plan = calculateContextBudget(
+      [
+        provider('a', 'claude-fable-5-1[1m]'),
+        provider('b', 'fable[1m]'),
+        provider('c', 'opus'),
+        provider('d', 'gpt-5.6-terra'),
+        provider('e', 'quantum-9000'),
+        provider('f', 'provider-default'),
+      ],
+      ['a', 'b', 'c', 'd', 'e', 'f'],
+      undefined,
+      {}
+    );
+    const byName = Object.fromEntries(plan.providerLimits.map((limit) => [limit.provider, limit]));
+    expect(byName.a).toMatchObject({ contextWindowTokens: 1_000_000, source: 'model' });
+    expect(byName.b).toMatchObject({ contextWindowTokens: 1_000_000, source: 'model' });
+    expect(byName.c).toMatchObject({ contextWindowTokens: 200_000, source: 'model' });
+    expect(byName.d).toMatchObject({ contextWindowTokens: 1_050_000, source: 'model' });
+    // An id no rule recognises is a conservative default, not a claimed model window.
+    expect(byName.e).toMatchObject({ contextWindowTokens: 128_000, source: 'provider-default' });
+    expect(byName.f).toMatchObject({ contextWindowTokens: 128_000, source: 'provider-default' });
+  });
+
   it('rejects malformed context-window overrides', () => {
     expect(() =>
       calculateContextBudget([provider('duck', 'provider-default')], ['duck'], undefined, {

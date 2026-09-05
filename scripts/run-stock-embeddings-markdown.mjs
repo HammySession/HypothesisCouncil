@@ -5,8 +5,9 @@
 //   npm run stock:markdown -- --yes
 //   STOCK_EMBEDDINGS_REPO=/absolute/path npm run stock:markdown
 //
-// The provider profiles live in the `frontier` preset (see `hc presets`); this script only picks
-// the repository and the Markdown-only context mode.
+// The provider profiles live in the `frontier` preset (see `hc presets`). The preset selects the
+// newest model per vendor automatically (`hc models` shows the choice; `--model KEY=ID` pins
+// one); this script only picks the repository and the Markdown-only context mode.
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
