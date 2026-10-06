@@ -2,7 +2,7 @@ import { HypothesisCouncilService } from './research/orchestrator.js';
 import { ResearchProposalService } from './research/proposal/service.js';
 import { proposalStoreFor } from './research/proposal/store.js';
 import { RubberDuckResearchGateway } from './research/provider-gateway.js';
-import { createFetchSourceVerifier, type SourceVerifier } from './research/source-verify.js';
+import type { SourceVerifier } from './research/source-verify.js';
 import { ResearchSessionStore } from './research/store.js';
 import type { RubberDuckClientFactory } from './rubber-duck/types.js';
 
@@ -29,7 +29,7 @@ export function createCouncilRuntime(
   const gateway = new RubberDuckResearchGateway(clientFactory);
   return {
     service: new HypothesisCouncilService(gateway, store, {
-      sourceVerifier: options.sourceVerifier ?? createFetchSourceVerifier(),
+      sourceVerifier: options.sourceVerifier,
     }),
     proposals: new ResearchProposalService(gateway, proposalStoreFor(store), {
       councilStore: store,

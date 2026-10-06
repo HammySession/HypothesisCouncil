@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { CliDependencies } from '../../../src/cli/dependencies.js';
@@ -88,6 +88,12 @@ export interface TestContextOptions {
   commandsOnPath?: string[];
   /** Vendor configuration directory; defaults to an empty temp dir so discovery finds nothing. */
   homeDirectory?: string;
+  /**
+   * Whether the person configured Rubber Duck themselves (a config file in the home directory).
+   * Defaults to true, so the fake ducks are used as they are; false makes the CLI choose the auto
+   * preset from `commandsOnPath`.
+   */
+  rubberDuckConfigured?: boolean;
   /** Fake vendor listing runner; defaults to rejecting every command. */
   runVendorCommand?: CommandRunner;
   /** Source verifier for the sources stage; defaults to one that skips every fetch. */
@@ -111,12 +117,18 @@ export function createTestContext(options: TestContextOptions = {}): TestContext
   const clients: FakeRubberDuckClient[] = [];
   const opened: string[] = [];
   const commandsOnPath = new Set(options.commandsOnPath ?? []);
+  const homeDirectory = options.homeDirectory ?? mkdtempSync(join(tmpdir(), 'hc-home-'));
+  if (options.rubberDuckConfigured ?? true) {
+    const configDirectory = join(homeDirectory, '.mcp-rubber-duck');
+    mkdirSync(configDirectory, { recursive: true });
+    writeFileSync(join(configDirectory, 'config.json'), '{"providers":{}}\n');
+  }
   const context: TestContext = {
     io,
     env: options.env ?? {},
     envSnapshot: { ...(options.env ?? {}) },
     platform: options.platform ?? 'linux',
-    homeDirectory: options.homeDirectory ?? mkdtempSync(join(tmpdir(), 'hc-home-')),
+    homeDirectory,
     runVendorCommand:
       options.runVendorCommand ??
       ((command) => Promise.reject(new Error(`vendor command not available in tests: ${command}`))),

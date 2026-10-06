@@ -171,7 +171,7 @@ describe('hc doctor', () => {
 
     expect(report.providers).toEqual([]);
     expect(report.problems[0]).toContain('Unable to start');
-    expect(report.hints[0]).toContain('--preset quick');
+    expect(report.hints[0]).toContain('--preset auto');
     expect(doctorText(report)).toContain('✗ Unable to start');
   });
 

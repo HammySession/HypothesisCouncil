@@ -48,11 +48,12 @@ import {
   isScoutProvider,
   normalizeSources,
   parseSourcesFile,
+  publicSource,
   renderSourcesSection,
-  sourcePriority,
-  splitAppendix,
   type SourceInput,
+  sourcePriority,
   type SourceRecord,
+  splitAppendix,
 } from './sources.js';
 import { ResearchSessionStore } from './store.js';
 import type {
@@ -718,7 +719,11 @@ export class HypothesisCouncilService {
       'context-manifest.json',
       JSON.stringify(rebuilt.manifest, null, 2)
     );
-    this.store.writeReport(session.id, 'sources.json', JSON.stringify(included, null, 2));
+    this.store.writeReport(
+      session.id,
+      'sources.json',
+      JSON.stringify(included.map(publicSource), null, 2)
+    );
     if (appendix) this.store.writeReport(session.id, 'sources-section.txt', appendix);
     this.store.save(session);
     return rebuilt.packet;

@@ -209,7 +209,7 @@ describe('discoverModels', () => {
     });
     expect(stale.gemini?.models.map((model) => model.id)).toContain('gemini-3.8-flash-high');
     expect(stale.grok).toMatchObject({ source: 'curated', fresh: false, error: 'no grok' });
-    expect(stale.grok?.models.map((model) => model.id)).toEqual(['grok-4.6', 'grok-4.5']);
+    expect(stale.grok?.models.map((model) => model.id)).toEqual(['grok-4.7', 'grok-4.6']);
   });
 
   it('reports a missing command and a timeout without rejecting', async () => {
@@ -294,9 +294,9 @@ describe('resolveCouncilModels', () => {
     expect(runner.calls).toEqual([]);
     expect(pinned.models.agy).toMatchObject({ id: 'gemini-3.8-flash-high', origin: 'pinned' });
     expect(pinned.models.codex).toMatchObject({
-      id: 'gpt-5.6-sol',
+      id: 'gpt-6.1-sol',
       origin: 'pinned',
-      contextWindowTokens: 1_050_000,
+      contextWindowTokens: 272_000,
     });
 
     const explicit = await resolveCouncilModels(frontier, {
@@ -323,13 +323,13 @@ describe('resolveCouncilModels', () => {
       policy: 'latest',
       discovery: options,
     });
-    expect(models.grok).toMatchObject({ id: 'grok-4.6', origin: 'fallback', note: 'grok down' });
+    expect(models.grok).toMatchObject({ id: 'grok-4.7', origin: 'fallback', note: 'grok down' });
     expect(models.agy).toMatchObject({ id: 'gemini-3.8-flash-high', origin: 'fallback' });
-    expect(models.claude).toMatchObject({ id: 'claude-fable-5[1m]', origin: 'fallback' });
+    expect(models.claude).toMatchObject({ id: 'claude-fable-5-1[1m]', origin: 'fallback' });
     expect(models.codex).toMatchObject({
-      id: 'gpt-5.6-sol',
+      id: 'gpt-6.1-sol',
       origin: 'fallback',
-      contextWindowTokens: 1_050_000,
+      contextWindowTokens: 272_000,
     });
 
     const healthy = createFakeRunner();

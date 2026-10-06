@@ -231,7 +231,7 @@ describe('CLI formatting', () => {
     expect(lines).toContain('Providers: duck-a, duck-b (at least 2 must be ready)');
     expect(lines).toContain('Dials: novelty 5/10 (default) · skepticism 5/10 (default)');
     expect(lines).toContain(
-      'Planned provider calls: 11 (2 generation × 3 hypotheses, up to 6 reviews, 3 falsifications), plus repairs and retries when needed'
+      'Planned provider calls: 11 (2 generation x 3 hypotheses, up to 6 reviews, 3 falsifications), plus repairs and retries when needed'
     );
     expect(lines.find((line) => line.startsWith('Shared context budget'))).toContain(
       'argument transport'
@@ -253,7 +253,7 @@ describe('CLI formatting', () => {
     const ambitiousLines = runPreviewLines(ambitious);
     expect(ambitiousLines).toContain('Dials: novelty 9/10 (flag) · skepticism 8/10 (env)');
     expect(ambitiousLines).toContain(
-      'Planned provider calls: 20 (2 generation × 3 hypotheses, 2 out-of-the-box × 2, up to 10 reviews, 6 falsifications over 2 rounds), plus repairs and retries when needed'
+      'Planned provider calls: 20 (2 generation x 3 hypotheses, 2 out-of-the-box x 2, up to 10 reviews, 6 falsifications over 2 rounds), plus repairs and retries when needed'
     );
   });
 

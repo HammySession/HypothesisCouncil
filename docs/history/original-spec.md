@@ -1,3 +1,5 @@
+> **Historical document.** This is the original design brief written in August 2026 for an AI coding agent, before the first line of this repository existed. The implementation that followed differs from it in many places: the project does not fork Rubber Duck, uses file storage instead of SQLite, and ships a smaller workflow than the one described here. It is kept for context only. The current design is described in [design.md](../design.md).
+
 # LLM Hypothesis Council — Codex Implementation Specification
 
 **Target base project:** `nesquikm/mcp-rubber-duck`  

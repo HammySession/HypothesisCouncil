@@ -87,7 +87,7 @@ export function providerNamesFromTools(
 }
 
 export function parseAskDuckEnvelope(text: string, fallbackModel: string): RubberDuckAnswer {
-  // Model names may themselves contain brackets (for example `claude-fable-5[1m]`), so the model
+  // Model names may themselves contain brackets (for example `vendor-model[1m]`), so the model
   // segment is matched lazily up to the `]:` that closes the envelope header.
   const header = /^🦆 \[[^|\]\n]+(?:\s+\|\s+([^\n]+?))?\]:[ \t]*/;
   const match = text.match(header);

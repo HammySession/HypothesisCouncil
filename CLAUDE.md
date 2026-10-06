@@ -13,6 +13,9 @@
 - `src/executor/` is the only module that spawns vendor CLIs directly (the research-proposal
   handoff runs one executor with repository access there); `src/research/` never imports it,
   and executor profiles are configured through `HYPOTHESIS_COUNCIL_EXECUTOR_*` variables only.
+- Preset selection (`src/cli/preset-selection.ts`) falls back to the `auto` preset when a run
+  names no preset, no `defaultPreset` setting exists, and no Rubber Duck provider is configured.
+  `auto` seats whichever supported CLIs are on PATH and never writes configuration anywhere.
 - Model discovery and selection (`src/cli/model-discovery.ts`, `src/cli/model-selection.ts`) are
   CLI concerns. Discovery reads vendor catalog files field by field and spawns only read-only
   listing commands; vendor credentials are never copied into the council's model cache.
@@ -34,6 +37,9 @@
 - Preserve the independence barrier: initial provider outputs cannot influence other initial prompts.
 - Public status, report, and CLI JSON must not expose author or reviewer provider identities.
 - Provider processes run with a session directory as their working directory.
+- Documentation is written for people: short sentences, no em-dashes, no curly quotes, no arrow
+  glyphs. `README.md` and `docs/getting-started.md` are for new users; `docs/design.md` is the
+  architecture reference; `docs/history/original-spec.md` is historical and is not updated.
 
 ## Merge gate
 

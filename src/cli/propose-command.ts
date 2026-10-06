@@ -27,7 +27,7 @@ import type { CliDependencies } from './dependencies.js';
 import { executeHandoff } from './handoff-command.js';
 import { runInterviewLoop } from './interview.js';
 import { describeModels, type CouncilPreset } from './presets.js';
-import { selectPreset } from './preset-selection.js';
+import { defaultPresetName, selectPreset } from './preset-selection.js';
 import {
   createProposeInput,
   draftsText,
@@ -152,7 +152,7 @@ export async function startProposal(
   options: ProposeRunOptions = {}
 ): Promise<ProposalSession | undefined> {
   const settings = resolveStoreSettings(store, deps.env, settingsFlags(parsed));
-  const defaultName = options.preset ? undefined : settings.values.defaultPreset;
+  const defaultName = options.preset ? undefined : defaultPresetName(settings, deps);
   const selected = await selectPreset(parsed, true, deps, { store, settings, defaultName });
   const preset = selected?.preset ?? options.preset;
   const repositoryPath = pathFlag(parsed, '--repo');

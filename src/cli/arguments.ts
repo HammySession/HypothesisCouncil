@@ -86,7 +86,7 @@ export function parseModelFlags(parsed: ParsedArguments): Record<string, string>
     const id = separator > 0 ? entry.slice(separator + 1).trim() : '';
     if (!key || !id) {
       throw new Error(
-        `--model expects KEY=ID (for example --model codex=gpt-5.6-sol), got "${entry}"`
+        `--model expects KEY=ID (for example --model codex=gpt-6.1-sol), got "${entry}"`
       );
     }
     models[key] = id;

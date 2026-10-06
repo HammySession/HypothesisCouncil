@@ -15,7 +15,7 @@ describe('markdownToHtml', () => {
         '',
         '> Rankings summarize review signals.',
         '',
-        '### 1. H-001 — Title',
+        '### 1. H-001: Title',
         '',
         '**Claim:** water flows downhill',
         '',
@@ -28,7 +28,7 @@ describe('markdownToHtml', () => {
 
     expect(html).toContain('<h1>Hypothesis Council Report</h1>');
     expect(html).toContain('<blockquote>Rankings summarize review signals.</blockquote>');
-    expect(html).toContain('<h3>1. H-001 — Title</h3>');
+    expect(html).toContain('<h3>1. H-001: Title</h3>');
     expect(html).toContain('<p><strong>Claim:</strong> water flows downhill</p>');
     expect(html).toContain('<li>duck warning one</li>');
     expect(html).toContain('<li>duck warning two</li>');

@@ -124,7 +124,7 @@ describe('proposal markdown', () => {
     expect(markdown).toContain('# Research proposal: Merged design');
     expect(markdown).toContain('### Step 1: Merged step one');
     expect(markdown).toContain('**Kill criterion:** no change after 3 runs');
-    expect(markdown).toContain('**1. D-002 — Beta design** · score 8.00 · accept');
+    expect(markdown).toContain('**1. D-002: Beta design** · score 8.00 · accept');
     expect(markdown).toContain('## Alternatives kept');
     expect(markdown).toContain('Beta had the sharper kill criterion.');
     expect(markdown).not.toContain('duck-');

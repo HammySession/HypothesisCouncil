@@ -1,14 +1,9 @@
-# Hypothesis Council: reviewed Slice 1 design
+# Hypothesis Council design
 
-This document reconciles the original specification with the human-facing CLI and the decision to
-use Rubber Duck strictly through its published MCP package.
-
-## Review outcome
-
-The long-term design has a strong scientific spine: independent generation, authorship-label
-blinding, falsification, preserved dissent, equal recorded context, stable identity, and inspectable
-artifacts. Its original “MVP” combined most of the roadmap—semantic deduplication, Elo, evolution,
-SQLite, exact resume, and meta-review—and was therefore narrowed to a first vertical slice.
+This document describes how the council is built: the boundary with Rubber Duck, the workflow
+stages, the epistemic guardrails, the proposal workflow, executor safety, persistence, and the
+test contract. The original brief that the design was narrowed from is kept in
+[history/original-spec.md](history/original-spec.md).
 
 ## Package boundary
 
@@ -18,13 +13,13 @@ Council launches the package entry point and calls its public tools over stdio.
 
 ```text
 CLI or Hypothesis Council MCP server
-                ↓
+                |
 shared research service and session store
-                ↓
+                |
 Rubber Duck MCP client adapter
-                ↓
+                |
 installed mcp-rubber-duck subprocess
-                ↓
+                |
 configured HTTP and vendor CLI providers
 ```
 
@@ -40,6 +35,14 @@ read-only listing commands (`codex debug models`, `grok models`, `agy models`), 
 `src/cli/model-selection.ts` ranks the result. The choice reaches Rubber Duck only through its
 public `*_DEFAULT_MODEL` variables and the council's own `HYPOTHESIS_COUNCIL_CONTEXT_TOKENS_*`
 overrides; a normalised copy of the listings lives in `<session home>/models-cache.json`.
+
+Presets configure Rubber Duck in the current process only, through its public environment
+variables; nothing is written to the shell profile or to Rubber Duck's config file. When a run
+names no preset, no `defaultPreset` setting is set, and no Rubber Duck provider is configured
+(`src/cli/preset-selection.ts` checks the provider variables and the config file), the `auto`
+preset seats whichever of Claude Code and Codex are on PATH, so a fresh install needs no
+configuration. A machine with neither CLI gets an install hint instead of a Rubber Duck start-up
+error.
 
 Web scouts are ordinary Rubber Duck custom CLI providers whose names end in `_scout` or
 `-scout`. `src/rubber-duck/scout-profiles.ts` builds them from the same vendor CLIs with web
@@ -65,25 +68,25 @@ terminates the Rubber Duck server and rejects concurrent MCP calls, but an alrea
 CLI grandchild may remain alive until its configured provider timeout. Strong process-tree
 cancellation requires an upstream capability or a platform-specific supervisor.
 
-## Slice 1 workflow
+## Workflow
 
 ```text
 explicit goal + context preview
-            ↓
-optional sources stage: supplied file + web scouts → mechanical verification → blind critique
-            ↓
+            |
+optional sources stage: supplied file + web scouts -> mechanical verification -> blind critique
+            |
 parallel independent generation (sealed)
-            ↓
+            |
 deterministic evidence-provenance verification
-            ↓
+            |
 lexical duplicate clustering + consensus-crowding measurement
-            ↓
+            |
 balanced authorship-label-blinded review
-            ↓
+            |
 deterministic preliminary ordering (fatal and untestable-falsifier gates)
-            ↓
+            |
 adversarial falsification of finalists
-            ↓
+            |
 inspect candidates, ask follow-ups, export report
 ```
 
@@ -101,8 +104,8 @@ Models trained on the same literature tend to restate consensus and to treat rem
 as evidence, so the workflow makes falsifiability and provenance structural rather than
 rhetorical:
 
-- Every hypothesis must state `differsFromConsensus` — an observable way it disagrees with the
-  textbook or most obvious explanation — because restated consensus is recall, not a hypothesis.
+- Every hypothesis must state `differsFromConsensus`, an observable way it disagrees with the
+  textbook or most obvious explanation, because restated consensus is recall, not a hypothesis.
 - Every load-bearing supporting claim is tagged with its basis: `context` (with a verbatim
   quote), `general-knowledge` (remembered literature, treated as unverified authority), or
   `speculation` (legitimate when tagged). A deterministic local pass checks each context quote
@@ -110,7 +113,7 @@ rhetorical:
   is consulted, so memory cannot be laundered into grounded evidence. Reviewers see the tags and
   are instructed not to accept remembered literature on authority.
 - Reviewers grade the declared falsifier as `concrete`, `vague`, or `untestable`. An untestable
-  kill criterion gates the candidate below every testable one — above only fatal flaws — so a
+  kill criterion gates the candidate below every testable one, above only fatal flaws, so a
   hypothesis nothing could refute cannot win on eloquence. Reviews persisted before the grade
   existed never gate.
 - After deduplication, cross-provider convergence is measured at a lower similarity threshold
@@ -133,7 +136,7 @@ aggregate so speculative-but-testable ideas stay visible next to plausible-but-b
 
 ### Dials
 
-Two integer dials (0–10, aliases `low`/`medium`/`high` = 2/5/8) are resolved once per run from
+Two integer dials (0-10, aliases `low`/`medium`/`high` = 2/5/8) are resolved once per run from
 flag, environment variable, settings file, or default, and persisted on the session together with
 their origins and the derived `DialPolicy` (`src/research/dials.ts`). Level 5/5 reproduces the
 constants the council used before dials existed.
@@ -172,7 +175,7 @@ Scouted records that are unreachable or retracted are dropped; user-supplied rec
 and labelled.
 
 At skepticism 5 and above one seeded council provider grades the records in batches of twenty for
-reliability (1–10), replication status, and concerns, without seeing who proposed them. The
+reliability (1-10), replication status, and concerns, without seeing who proposed them. The
 per-record `scoutProvider` field is private and is stripped from every public snapshot, report,
 and prompt; scout names themselves are configuration and may appear in warnings.
 
@@ -207,12 +210,12 @@ stage checkpoints on disk, subject to the vendor-grandchild limitation above. Th
 mode until the project has a durable worker, ownership, and heartbeat semantics.
 
 The standalone MCP server exposes the same workflow as seven normal foreground tools: four for
-the council and three for research proposals. Persistent session data—not an in-memory MCP task
-handle—is authoritative. Executing a handoff is a CLI-only action.
+the council and three for research proposals. Persistent session data, not an in-memory MCP task
+handle, is authoritative. Executing a handoff is a CLI-only action.
 
 The Markdown report remains the canonical artifact. `hc report --html` (and `/report html` in the
-shell) renders it as a styled, self-contained HTML document—a CLI presentation concern with all
-report text HTML-escaped—and `--open` launches it in the default browser.
+shell) renders it as a styled, self-contained HTML document, a CLI presentation concern with all
+report text HTML-escaped, and `--open` launches it in the default browser.
 
 ## Proposal workflow
 
@@ -220,18 +223,18 @@ report text HTML-escaped—and `--open` launches it in the default browser.
 
 ```text
 topic + context (optionally a council session's context and ranked findings)
-            ↓
-sealed interview: each provider proposes questions independently → merged, deduplicated, unlabelled
-            ↓
+            |
+sealed interview: each provider proposes questions independently -> merged, deduplicated, unlabelled
+            |
 answers (free text, skip, another round, or finish early)
-            ↓
+            |
 independent drafting (sealed, like generation)
-            ↓
-blinded critique: one non-author critic per draft → ranked drafts
-            ↓
+            |
+blinded critique: one non-author critic per draft -> ranked drafts
+            |
 synthesis into one proposal (or `--pick` one draft)
-            ↓
-handoff bundle → optional live executor
+            |
+handoff bundle -> optional live executor
 ```
 
 Providers never see one another's questions before the merge, and the merged list shows how many
@@ -266,14 +269,14 @@ after the exit. Custom executors are declared through `HYPOTHESIS_COUNCIL_EXECUT
 
 ## Persistence and context
 
-Slice 1 uses atomic, permission-restricted JSON checkpoints and separate raw/parsed artifacts. This
+Sessions use atomic, permission-restricted JSON checkpoints and separate raw/parsed artifacts. This
 supports one foreground writer and concurrent readers. SQLite migrations, WAL, idempotency keys,
 and exactly-once updates are required before detached or simultaneous workers.
 
 The CLI treats the current directory (or `--repo`) as the repository and includes supported text
-and code files by default. `--context` narrows that selection—it accepts files, directories, and
-deterministic glob patterns (`*` and `?` within a segment, `**` across directories; denied
-directories are never traversed)—and `--markdown-only` limits it to Markdown/MDX. Ordering and
+and code files by default. `--context` narrows that selection. It accepts files, directories,
+and deterministic glob patterns (`*` and `?` within a segment, `**` across directories; denied
+directories are never traversed), and `--markdown-only` limits it to Markdown/MDX. Ordering and
 truncation are deterministic; symlinks, generated directories, common credential paths, and local
 settings files are denied; and a manifest records hashes, omissions, and truncation. A requested
 path or pattern that selects no eligible files is recorded in the manifest, warned about in the
@@ -322,7 +325,7 @@ Workflow tests use a scripted provider to verify independence, repair, label rem
 assignment, falsification, artifacts, reporting, and grounded follow-up answers. No normal test
 contacts a live provider.
 
-## Later slices
+## Future work
 
 1. Replace file storage with versioned SQLite, WAL, and idempotent stage recovery.
 2. Add multiple blinded reviews, explicit tie policy, call budgets, and stage timeouts.
@@ -341,7 +344,7 @@ contacts a live provider.
    explanations, and semantic (not just lexical) crowding measurement.
 9. Web retrieval today exists only in the sources stage: scouts propose records before
    generation, the harness verifies them mechanically, and generators still never retrieve.
-   Extending retrieval to the falsification stage — attackers searching for disconfirming
-   evidence — remains a later slice, so literature acts as adversary, not oracle.
+   Extending retrieval to the falsification stage, where attackers search for disconfirming
+   evidence, is future work, so literature acts as adversary, not oracle.
 
-Only then should the project claim conformance with the original specification’s complete MVP.
+Only then should the project claim to cover the complete MVP of the original specification.

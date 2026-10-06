@@ -4,6 +4,7 @@ import { publicCandidateRecord, publicSessionSnapshot } from '../research/report
 import type { ResearchSessionStore } from '../research/store.js';
 import type { ResearchSession } from '../research/types.js';
 import { withCouncilRuntime } from '../runtime.js';
+import { VERSION } from '../version.js';
 import { isProposalId } from '../research/proposal/store.js';
 import { executePropose } from './propose-command.js';
 import { flag, hasFlag, parseArguments, pathFlag } from './arguments.js';
@@ -23,10 +24,11 @@ import {
 } from './format.js';
 import { loadShellHistory, rememberShellLine, saveShellHistory } from './history.js';
 import { describeModels, presetsText } from './presets.js';
+import { defaultPresetName, selectPreset } from './preset-selection.js';
 import { copyReport, reportText, renderSessionHtml, writeHtmlReport } from './report-files.js';
 import { executeReports, executeTag, openReport } from './reports-command.js';
 import { runCommand } from './run-command.js';
-import { currentDials, executeSettings } from './settings-command.js';
+import { currentDials, executeSettings, resolveStoreSettings } from './settings-command.js';
 import { settingsExtras } from './settings-extras.js';
 import { parseSettingsArgs } from './settings-view.js';
 import { SHELL_COMMANDS } from './shell/commands/index.js';
@@ -36,23 +38,23 @@ import { shellHelpText } from './shell/help.js';
 import { createTerminalIO, type InputStream, type OutputStream } from './shell/io.js';
 import { dispatchShellLine } from './shell/registry.js';
 
-/** `hc status RP-…` and friends route to the matching `hc propose` subcommand. */
+/** `hc status RP-...` and friends route to the matching `hc propose` subcommand. */
 const PROPOSAL_ROUTED_COMMANDS = new Set(['status', 'report', 'resume', 'ask']);
 
 export function cliHelpText(): string {
-  return `Hypothesis Council
+  return `Hypothesis Council ${VERSION}
 
-Usage:
-  hc                                         Start the interactive shell
-  hc doctor [--probe] [--preset NAME] [--json]
-                                             Check providers, models, transports, and CLIs
-  hc presets                                 List ready-made council presets
-  hc models [--preset NAME] [--refresh] [--json]
-                                             Show the model each preset slot resolves to
-  hc run                                     Analyze the current repository
+Start here:
+  hc doctor                                  Check which AI CLIs the council can use
+  hc run "<goal>" --dry-run                  Preview what a run would send, without sending it
+  hc run "<goal>" --yes                      Run the council on the current repository
+  hc report --html --open                    Open the latest report in your browser
+  hc                                         Start the interactive shell (type /help there)
+
+Council runs:
   hc run "<goal>" [--repo PATH] [--context PATH|GLOB]... [--markdown-only] [--yes]
-                                             --context accepts files, directories, and glob
-                                             patterns such as "src/**/*.ts"
+                                             --context accepts files, directories, and globs
+                                             such as "src/**/*.ts"
   hc run [--preset NAME] [--providers a,b] [--min-providers N] [--max-context-bytes N]
   hc run [--novelty LEVEL] [--skepticism LEVEL]
                                              LEVEL is 0-10 or low, medium, high (default 5)
@@ -62,31 +64,43 @@ Usage:
                                              Cite a sources file (JSON or Markdown); web scouts
                                              propose more; --web off keeps the run offline
   hc run [--dry-run] [--out PATH] [--json]   Preview only / copy the report / machine output
+  hc resume [SESSION]                        Continue a run from its last completed stage
+
+Providers and settings:
+  hc doctor [--probe] [--preset NAME] [--json]
+                                             Check providers, models, transports, and CLIs
+  hc presets                                 List the council presets (auto, quick, frontier)
+  hc models [--preset NAME] [--refresh] [--json]
+                                             Show the model each preset slot resolves to
   hc settings [--json] [--providers]         Show effective settings, preset models, and (with
-                                             --providers) the configured ducks
+                                             --providers) the configured providers
   hc settings set KEY VALUE | unset KEY | path | reset | help
                                              Edit <session home>/settings.json
+
+Results:
   hc status [SESSION] [--json]
   hc candidates [SESSION] [--json]
   hc show H-001 [--session SESSION] [--json] (H1 and 1 are accepted too)
   hc ask [SESSION] "<question>" [--provider NAME]
-  hc resume [SESSION]
   hc report [SESSION] [--json] [--out PATH] [--html] [--open]
-                                             --html writes a styled HTML report; --open also
-                                             opens it in your default browser
   hc reports [--filter TEXT] [--tag TAG] [--json] [--html [--open]]
-                                             List saved reports with tags; --html writes the
-                                             gallery to <session home>/index.html
+                                             List saved reports; --html writes the gallery to
+                                             <session home>/index.html
   hc open N|SESSION|index                    Open one report (or the gallery) in the browser
   hc tag [SESSION] add a,b | rm a | title TEXT | clear | show
-                                             Tag or retitle a report for the catalog
   hc sessions [--json]
+
+Research proposals:
   hc propose "<topic>" [--repo PATH] [--context PATH|GLOB]... [--from RC-SESSION] [--yes]
-                                             Research proposal: the council interviews you,
-                                             drafts independently, critiques blind, and merges
+                                             The council interviews you, drafts independently,
+                                             critiques blind, and merges one proposal
   hc propose list | status | questions | answer | next | done | draft | pick | show | report
   hc propose ask | resume | handoff --to claude|codex|agy|grok [--run]
                                              hc propose help lists every subcommand and flag
+
+Other:
+  hc --version                               Print the version
+  hc help                                    Print this text
 
 ${shellHelpText(SHELL_COMMANDS)}`;
 }
@@ -106,10 +120,15 @@ export async function executeCommand(
   store: ResearchSessionStore,
   deps: CliDependencies
 ): Promise<number> {
-  const command = args[0] || 'interactive';
+  const first = args[0] || 'interactive';
+  const { io } = deps;
+  if (first === '--version' || first === '-v' || first === 'version') {
+    io.out(VERSION);
+    return 0;
+  }
+  const command = first === '--help' || first === '-h' ? 'help' : first;
   const parsed = parseArguments(args.slice(1));
   const json = hasFlag(parsed, '--json');
-  const { io } = deps;
   if (command === 'propose') {
     return executePropose(args.slice(1), store, deps);
   }
@@ -285,6 +304,28 @@ export async function executeCommand(
   throw new Error(`Unknown command: ${command}\n\n${cliHelpText()}`);
 }
 
+/**
+ * Seat the council the shell will use: the settings default, or the auto preset when the person
+ * configured no provider themselves. A preset that cannot run is reported, not fatal.
+ */
+async function applyStartupPreset(ctx: ShellContext): Promise<void> {
+  try {
+    const settings = resolveStoreSettings(ctx.store, ctx.env);
+    const name = defaultPresetName(settings, ctx);
+    if (!name) return;
+    const selected = await selectPreset(parseArguments([]), true, ctx, {
+      store: ctx.store,
+      settings,
+      defaultName: name,
+    });
+    if (!selected) return;
+    ctx.state.preset = selected.preset;
+    ctx.io.out(`Preset ${selected.preset.name}: ${selected.preset.providers.join(', ')}`);
+  } catch (error) {
+    reportError(ctx.io, error);
+  }
+}
+
 export interface InteractiveStreams {
   stdin: InputStream;
   stdout: OutputStream;
@@ -322,10 +363,9 @@ export async function runInteractive(
   }
   let activeController: AbortController | undefined;
 
-  io.out('Hypothesis Council · interactive rubber duck');
-  io.out(
-    'Type /help for commands. Plain text chats (@duck and @path mentions work); council runs are always explicit.'
-  );
+  io.out(`Hypothesis Council ${VERSION}`);
+  io.out('Type /help for commands. Plain text chats with a provider; /run starts a council run.');
+  await applyStartupPreset(ctx);
 
   const prompt = () => {
     rl.setPrompt(promptText(ctx.state));

@@ -73,6 +73,19 @@ describe('pickLatestModel', () => {
     expect(pickLatestModel('codex', codexModels)?.id).toBe('gpt-5.6-sol');
   });
 
+  it('ranks gpt-6.1 above the gpt-6 and gpt-5.6 families and drops the retiring gpt-5.5', () => {
+    const models: DiscoveredModel[] = [
+      { id: 'gpt-5.6-sol', priority: 5 },
+      { id: 'gpt-6-sol', priority: 3 },
+      { id: 'gpt-6-astra', priority: 2 },
+      { id: 'gpt-6.1-sol', priority: 1 },
+      { id: 'gpt-reserve', priority: 4, hidden: true },
+      { id: 'gpt-5.5', priority: 13, supersededBy: 'gpt-6.1-sol' },
+    ];
+    expect(pickLatestModel('codex', models)?.id).toBe('gpt-6.1-sol');
+    expect(pickLatestModel('codex', models.slice(0, 3))?.id).toBe('gpt-6-astra');
+  });
+
   it('prefers the newest Gemini version over the pro tier by default', () => {
     expect(pickLatestModel('gemini', agyModels)?.id).toBe('gemini-3.8-flash-high');
   });
@@ -103,6 +116,12 @@ describe('pickLatestModel', () => {
       { id: 'grok-5', hidden: true },
     ];
     expect(pickLatestModel('grok', models)?.id).toBe('grok-4.6');
+  });
+
+  it('ranks grok-4.7 above its build-fast variant in either listing order', () => {
+    const models = ids(['grok-4.7-build-fast', 'grok-4.7', 'grok-4.6', 'grok-4.5']);
+    expect(pickLatestModel('grok', models)?.id).toBe('grok-4.7');
+    expect(pickLatestModel('grok', [...models].reverse())?.id).toBe('grok-4.7');
   });
 
   it('drops ids from other vendors in a mixed listing', () => {

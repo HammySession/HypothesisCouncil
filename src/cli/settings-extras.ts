@@ -2,8 +2,8 @@ import type { ResearchSessionStore } from '../research/store.js';
 import { withCouncilRuntime } from '../runtime.js';
 import type { CliDependencies } from './dependencies.js';
 import { describeModelOrigin } from './model-selection.js';
-import { resolvePresetModels } from './preset-selection.js';
-import { findPreset, type CouncilPreset } from './presets.js';
+import { defaultPresetName, resolvePresetModels } from './preset-selection.js';
+import { DEFAULT_PRESET, findPreset, type CouncilPreset } from './presets.js';
 import { resolveStoreSettings } from './settings-command.js';
 import type { SettingsRow } from './settings-view.js';
 import { basketSize } from './shell/basket.js';
@@ -23,14 +23,17 @@ export interface SettingsExtrasOptions {
 
 function activePreset(
   state: ShellState | undefined,
-  defaultPreset: string | undefined
+  name: string | undefined,
+  deps: CliDependencies
 ): { preset?: CouncilPreset; origin: string; error?: string } {
   if (state?.preset) return { preset: state.preset, origin: 'shell (/preset)' };
-  if (!defaultPreset) return { origin: 'default' };
+  if (!name) return { origin: 'default' };
+  const origin =
+    name === DEFAULT_PRESET ? 'default (no provider configured)' : 'settings (defaultPreset)';
   try {
-    return { preset: findPreset(defaultPreset), origin: 'settings (defaultPreset)' };
+    return { preset: findPreset(name, deps.locateCommand), origin };
   } catch (error) {
-    return { origin: 'settings (defaultPreset)', error: (error as Error).message };
+    return { origin, error: (error as Error).message };
   }
 }
 
@@ -41,7 +44,11 @@ export async function settingsExtras(
 ): Promise<SettingsRow[]> {
   const rows: SettingsRow[] = [];
   const settings = resolveStoreSettings(store, deps.env);
-  const { preset, origin, error } = activePreset(options.state, settings.values.defaultPreset);
+  const { preset, origin, error } = activePreset(
+    options.state,
+    defaultPresetName(settings, deps),
+    deps
+  );
   rows.push({
     key: 'preset',
     value: preset ? preset.name : error ? `(invalid: ${error})` : '(none)',

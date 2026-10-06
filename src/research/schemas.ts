@@ -103,11 +103,7 @@ export const SourceCritiqueOutputSchema = z.object({
 });
 
 export type HypothesisEvidence = z.infer<typeof HypothesisEvidenceSchema>;
-export type ScoutedSource = z.infer<typeof ScoutedSourceSchema>;
 export type SourceScoutOutput = z.infer<typeof SourceScoutOutputSchema>;
-export type SourceAssessment = z.infer<typeof SourceAssessmentSchema>;
-export type SourceCritiqueOutput = z.infer<typeof SourceCritiqueOutputSchema>;
-export type EvidenceBasis = HypothesisEvidence['basis'];
 export type GeneratedHypothesis = z.infer<typeof GeneratedHypothesisSchema>;
 export type GenerationOutput = z.infer<typeof GenerationOutputSchema>;
 export type ReviewOutput = z.infer<typeof ReviewOutputSchema>;

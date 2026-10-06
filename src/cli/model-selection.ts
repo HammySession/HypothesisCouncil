@@ -214,9 +214,9 @@ export function pickLatestModel(
 /** Ids seen on a development machine or already in the repository, best first. */
 export const CURATED_LATEST: Readonly<Record<ModelVendor, readonly string[]>> = {
   claude: ['claude-fable-5-1[1m]', 'claude-fable-5[1m]'],
-  codex: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+  codex: ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-sol'],
   gemini: ['gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.1-pro-high'],
-  grok: ['grok-4.6', 'grok-4.5'],
+  grok: ['grok-4.7', 'grok-4.6'],
 };
 
 export interface ResolvedModel {
@@ -294,7 +294,7 @@ export function resolveModelChoice(input: ModelChoiceInput): ResolvedModel {
   };
 }
 
-/** Short origin text for tables: `auto: latest of 7`, `pinned`, `explicit`, `fallback: …`. */
+/** Short origin text for tables: `auto: latest of 7`, `pinned`, `explicit`, `fallback: ...`. */
 export function describeModelOrigin(model: ResolvedModel): string {
   switch (model.origin) {
     case 'explicit':

@@ -108,7 +108,7 @@ export function createPublicProposalReport(session: ProposalSession): Record<str
     handoffs: session.handoffs,
     warnings: session.warnings,
     methodNotes: [
-      'Interview questions were generated independently per provider and merged by lexical similarity; in sealed mode no provider saw another provider’s questions.',
+      'Interview questions were generated independently per provider and merged by lexical similarity; in sealed mode no provider saw the questions of another provider.',
       'Drafts were written independently from the same transcript and context; critiques hid author labels and never came from the author.',
       'The merged proposal is a synthesis (or a pick) over public drafts and critiques; dissenting designs are kept as alternatives rather than discarded.',
       'Prior council findings, when present, were inputs to build on or refute, not conclusions.',

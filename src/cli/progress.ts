@@ -42,7 +42,7 @@ export function createProgressRenderer(options: ProgressRendererOptions): Progre
     if (!options.live || !stage) return;
     const width = Math.max(20, (options.columns || 100) - 1);
     const text = line();
-    options.write(`\r\x1b[2K${text.length > width ? `${text.slice(0, width - 1)}…` : text}`);
+    options.write(`\r\x1b[2K${text.length > width ? `${text.slice(0, width - 3)}...` : text}`);
     lineShown = true;
   };
   const endLine = () => {

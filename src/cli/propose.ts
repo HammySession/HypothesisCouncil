@@ -108,7 +108,7 @@ export function draftsText(session: ProposalSession): string {
       const verdict = critique
         ? `${critique.verdict}${critique.fatalGap ? ' · fatal gap' : ''}`
         : 'no critique';
-      return `${draft.rank ?? '—'}. ${draft.id}  ${draft.title}  [score ${draft.score?.toFixed(2) ?? 'n/a'} · ${verdict} · ${draft.experiments.length} step${draft.experiments.length === 1 ? '' : 's'}]`;
+      return `${draft.rank ?? '-'}. ${draft.id}  ${draft.title}  [score ${draft.score?.toFixed(2) ?? 'n/a'} · ${verdict} · ${draft.experiments.length} step${draft.experiments.length === 1 ? '' : 's'}]`;
     })
     .join('\n');
 }
@@ -126,7 +126,7 @@ export function proposalStatusText(session: ProposalSession): string {
   if (session.config.fromSessionId) lines.push(`Seeded from: ${session.config.fromSessionId}`);
   if (session.handoffs.length > 0) {
     const last = session.handoffs.at(-1)!;
-    lines.push(`Handoff: ${last.id} → ${last.executor.profile} (${last.status})`);
+    lines.push(`Handoff: ${last.id} -> ${last.executor.profile} (${last.status})`);
   }
   if (session.warnings.length > 0) {
     lines.push(`Warnings (${session.warnings.length}):`);
@@ -147,7 +147,7 @@ export function proposalSummaryText(session: ProposalSession): string {
     `Hypotheses: ${proposal.hypotheses.length} · steps: ${proposal.experiments.length} · deliverables: ${proposal.deliverables.length}`,
   ];
   for (const step of [...proposal.experiments].sort((a, b) => a.step - b.step)) {
-    lines.push(`  ${step.step}. ${step.title} — ${step.estimatedEffort}`);
+    lines.push(`  ${step.step}. ${step.title} (${step.estimatedEffort})`);
   }
   if (proposal.alternatives.length > 0)
     lines.push(`Alternatives kept: ${proposal.alternatives.length}`);

@@ -160,7 +160,7 @@ function whenText(iso: string): string {
 }
 
 function truncate(value: string, width: number): string {
-  return value.length <= width ? value : `${value.slice(0, width - 1)}…`;
+  return value.length <= width ? value : `${value.slice(0, width - 3)}...`;
 }
 
 export function reportsText(entries: ReportEntry[]): string {
@@ -172,7 +172,7 @@ export function reportsText(entries: ReportEntry[]): string {
       entry.id,
       whenText(entry.createdAt),
       entry.stageLabel,
-      entry.elapsedMs === undefined ? '—' : formatDuration(entry.elapsedMs),
+      entry.elapsedMs === undefined ? '-' : formatDuration(entry.elapsedMs),
       String(entry.distinctCandidates),
       truncate(entry.title, 48),
       entry.tags.slice(0, 4).join(', '),

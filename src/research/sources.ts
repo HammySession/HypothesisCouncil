@@ -175,7 +175,7 @@ function recordFromObject(value: unknown): SourceInput | undefined {
 }
 
 /**
- * One Markdown or plain-text line: `- [Title](url)`, `- Title — url`, `- url`, or a line with a
+ * One Markdown or plain-text line: `- [Title](url)`, `- Title - url` (any dash), `- url`, or a line with a
  * DOI. Lines without a URL or DOI are kept as title-only records (a book, say) and are never
  * fetched.
  */
@@ -379,10 +379,6 @@ export function renderSourcesSection(sources: SourceRecord[]): string {
     ...sources.map(renderSourceLine),
     SOURCES_SECTION_END,
   ].join('\n');
-}
-
-export function sourcesSectionBytes(sources: SourceRecord[]): number {
-  return Buffer.byteLength(renderSourcesSection(sources), 'utf8');
 }
 
 /**

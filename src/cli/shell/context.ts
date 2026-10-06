@@ -67,11 +67,6 @@ export function createShellState(
   };
 }
 
-/** The single provider a `named` selection points at, or undefined for auto/all. */
-export function selectedProviderName(state: ShellState): string | undefined {
-  return state.selection.kind === 'named' ? state.selection.names[0] : undefined;
-}
-
 export function describeSelection(selection: ProviderSelection): string | undefined {
   if (selection.kind === 'auto') return undefined;
   if (selection.kind === 'all') return 'all';
@@ -108,7 +103,7 @@ export function chatTurns(state: ShellState, provider: string): ChatTurn[] {
   return turns;
 }
 
-/** Prior turns in the `User: …` / `Duck: …` form the grounded-ask prompt expects. */
+/** Prior turns in the `User: ...` / `Duck: ...` form the grounded-ask prompt expects. */
 export function priorTurnLines(turns: ChatTurn[]): string[] {
   return turns.map((turn) => `${turn.role === 'user' ? 'User' : 'Duck'}: ${turn.text}`);
 }

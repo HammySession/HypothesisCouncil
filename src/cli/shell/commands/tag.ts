@@ -4,7 +4,7 @@ import { splitShellArguments } from '../tokenize.js';
 
 export const tagCommand: ShellCommand = {
   name: 'tag',
-  usage: '/tag [SESSION] add a,b | rm a | title "…" | clear | show',
+  usage: '/tag [SESSION] add a,b | rm a | title "TEXT" | clear | show',
   summary: 'Tag or retitle a report for the catalog',
   run: (ctx, args) => {
     const words = splitShellArguments(args);

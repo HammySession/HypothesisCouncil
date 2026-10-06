@@ -93,7 +93,7 @@ export function rankCandidates(
 export function explainRanking(policy: DialPolicy): string[] {
   const points = (value: number) => `${value.toFixed(2)} point${value === 1 ? '' : 's'}`;
   return [
-    `Review aggregate: weighted mean of six review scores (novelty ×${policy.noveltyWeight.toFixed(2)}, robustness ×${policy.robustnessWeight.toFixed(2)}, others ×1.00)`,
+    `Review aggregate: weighted mean of six review scores (novelty x${policy.noveltyWeight.toFixed(2)}, robustness x${policy.robustnessWeight.toFixed(2)}, others ×1.00)`,
     `Consensus crowding: similarity threshold ${policy.crowdingThreshold.toFixed(2)}; crowded candidates ${policy.crowdingPenalty > 0 ? `lose ${points(policy.crowdingPenalty)}` : 'are flagged but not penalised'}`,
     `Unsupported evidence: candidates without verified context evidence ${policy.unsupportedEvidencePenalty > 0 ? `lose ${points(policy.unsupportedEvidencePenalty)}` : 'are flagged but not penalised'}${policy.unverifiedFinalistGate ? ' and rank below candidates with verified evidence' : ''}${policy.discountWeakSources ? '; a source graded below 4 for reliability or contested does not count as verified' : ''}`,
     `Gates: fatal flaw, then untestable falsifier${policy.unverifiedFinalistGate ? ', then no verified context evidence' : ''}`,

@@ -19,7 +19,7 @@ describe('shell chat', () => {
 
     await dispatchShellLine(ctx, 'hello everyone');
     expect(ctx.io.text()).toBe(
-      ['— duck-a · model-a · 0s', 'A says hi.', '', '— duck-b · 0s', 'error: boom'].join('\n')
+      ['[duck-a · model-a · 0s]', 'A says hi.', '', '[duck-b · 0s]', 'error: boom'].join('\n')
     );
     expect(ctx.clients[0].asks.map((ask) => ask.provider).sort()).toEqual(['duck-a', 'duck-b']);
     expect(ctx.state.chats.get('duck-a')).toHaveLength(2);
@@ -63,8 +63,8 @@ describe('shell chat', () => {
     });
     await dispatchShellLine(ctx, '/duck duck-a');
     await dispatchShellLine(ctx, '/ask-all Which candidate wins?');
-    expect(ctx.io.text()).toContain('— duck-a · 0s\nA: H-002.');
-    expect(ctx.io.text()).toContain('— duck-b · 0s\nB: H-001.');
+    expect(ctx.io.text()).toContain('[duck-a · 0s]\nA: H-002.');
+    expect(ctx.io.text()).toContain('[duck-b · 0s]\nB: H-001.');
     expect(ctx.state.selection).toEqual({ kind: 'named', names: ['duck-a'] });
     await expect(dispatchShellLine(ctx, '/ask-all')).rejects.toThrow('Usage: /ask-all QUESTION');
   });
@@ -214,7 +214,7 @@ describe('shell chat', () => {
   it('prints a lone successful reply bare and labels the rest', () => {
     expect(replyText([{ provider: 'a', text: 'only', elapsedMs: 0 }])).toBe('only');
     expect(replyText([{ provider: 'a', error: 'down', elapsedMs: 0 }])).toBe(
-      '— a · 0s\nerror: down'
+      '[a · 0s]\nerror: down'
     );
   });
 });

@@ -5,7 +5,7 @@ import type { ShellCommand } from '../registry.js';
 export const useCommand: ShellCommand = {
   name: 'use',
   usage: '/use SESSION',
-  summary: 'Select a persisted council session (RC-…) or research proposal (RP-…)',
+  summary: 'Select a persisted council session (RC-...) or research proposal (RP-...)',
   run: (ctx, args) => {
     if (!args) throw new Error('Usage: /use SESSION (run /sessions or /proposals to list them)');
     ctx.state.selectedSession = isProposalId(args)

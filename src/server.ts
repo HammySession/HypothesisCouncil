@@ -10,6 +10,7 @@ import type { ProposalSession } from './research/proposal/types.js';
 import { publicSessionSnapshot } from './research/report.js';
 import { dialsFromSettings, resolveSettings, type DialConfig } from './research/settings.js';
 import { loadSettingsFile, settingsPath } from './research/settings-store.js';
+import { VERSION } from './version.js';
 import { ResearchSessionStore } from './research/store.js';
 import { createCouncilRuntime, withCouncilRuntime, type CouncilRuntimeFactory } from './runtime.js';
 
@@ -32,7 +33,7 @@ function errorResult(error: unknown) {
 const DialInputSchema = z.union([z.number(), z.string()]).optional();
 
 export class HypothesisCouncilServer {
-  private readonly server = new McpServer({ name: 'hypothesis-council', version: '0.1.0' });
+  private readonly server = new McpServer({ name: 'hypothesis-council', version: VERSION });
 
   constructor(
     private readonly store = new ResearchSessionStore(),

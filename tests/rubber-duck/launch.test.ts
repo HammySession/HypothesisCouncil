@@ -24,7 +24,7 @@ describe('Rubber Duck launch resolution', () => {
       command: '/node/bin/node',
       args: ['/packages/mcp-rubber-duck/dist/index.js'],
       cwd: '/sessions/RC-1',
-      env: { PATH: '/bin', API_KEY: 'secret' },
+      env: { PATH: '/bin', API_KEY: 'secret', LOG_LEVEL: 'warn' },
       stderr: 'inherit',
     });
   });

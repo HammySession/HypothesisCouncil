@@ -14,12 +14,10 @@ import {
 import type { CliDependencies } from './dependencies.js';
 import { runPreviewLines } from './format.js';
 import { describeModels, type CouncilPreset } from './presets.js';
-import { selectPreset } from './preset-selection.js';
+import { defaultPresetName, selectPreset } from './preset-selection.js';
 import { createRunInput } from './run-options.js';
 import { resolveStoreSettings, settingsFlags } from './settings-command.js';
 import type { ShellIO } from './shell/io.js';
-
-export { selectPreset } from './preset-selection.js';
 
 export interface RunOutcome {
   session: ResearchSession;
@@ -56,8 +54,8 @@ export async function runCommand(
 ): Promise<RunOutcome | undefined> {
   const settings = resolveStoreSettings(store, deps.env, settingsFlags(parsed));
   // Precedence for the preset: --preset on the line, then /preset in the shell, then the
-  // settings default (environment variable or file).
-  const defaultName = options.preset ? undefined : settings.values.defaultPreset;
+  // settings default, then auto when the person configured no providers themselves.
+  const defaultName = options.preset ? undefined : defaultPresetName(settings, deps);
   const selected = await selectPreset(parsed, true, deps, { store, settings, defaultName });
   const preset = selected?.preset ?? options.preset;
   const repositoryPath = pathFlag(parsed, '--repo');

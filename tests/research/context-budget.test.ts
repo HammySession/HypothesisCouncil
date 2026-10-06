@@ -93,8 +93,9 @@ describe('calculateContextBudget', () => {
         provider('d', 'gpt-5.6-terra'),
         provider('e', 'quantum-9000'),
         provider('f', 'provider-default'),
+        provider('cli-codex_scout', 'gpt-6.1-sol', 'cli'),
       ],
-      ['a', 'b', 'c', 'd', 'e', 'f'],
+      ['a', 'b', 'c', 'd', 'e', 'f', 'cli-codex_scout'],
       undefined,
       {}
     );
@@ -103,6 +104,11 @@ describe('calculateContextBudget', () => {
     expect(byName.b).toMatchObject({ contextWindowTokens: 1_000_000, source: 'model' });
     expect(byName.c).toMatchObject({ contextWindowTokens: 200_000, source: 'model' });
     expect(byName.d).toMatchObject({ contextWindowTokens: 1_050_000, source: 'model' });
+    // GPT-6 follows the Codex catalog window, even behind a provider name that says `codex`.
+    expect(byName['cli-codex_scout']).toMatchObject({
+      contextWindowTokens: 272_000,
+      source: 'model',
+    });
     // An id no rule recognises is a conservative default, not a claimed model window.
     expect(byName.e).toMatchObject({ contextWindowTokens: 128_000, source: 'provider-default' });
     expect(byName.f).toMatchObject({ contextWindowTokens: 128_000, source: 'provider-default' });

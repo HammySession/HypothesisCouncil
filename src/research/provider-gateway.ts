@@ -16,9 +16,7 @@ export class RubberDuckResearchGateway implements ResearchProviderGateway {
     workingDirectory: string,
     signal?: AbortSignal
   ): Promise<ProviderDescriptor[]> {
-    return (await this.client(workingDirectory).listProviders(signal)).map((provider) => ({
-      ...provider,
-    }));
+    return this.client(workingDirectory).listProviders(signal);
   }
 
   async healthCheck(

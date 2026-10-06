@@ -8,7 +8,15 @@ import {
   type DiscoveryOptions,
 } from './model-discovery.js';
 import type { ResolvedModel } from './model-selection.js';
-import { applyPreset, findPreset, missingPresetCommands, type CouncilPreset } from './presets.js';
+import {
+  DEFAULT_PRESET,
+  NO_PROVIDER_CLI_MESSAGE,
+  applyPreset,
+  findPreset,
+  missingPresetCommands,
+  providersConfigured,
+  type CouncilPreset,
+} from './presets.js';
 
 export interface SelectedPreset {
   preset: CouncilPreset;
@@ -23,6 +31,19 @@ export interface SelectPresetOptions {
   /** `--model KEY=ID` values; the shell passes none. */
   explicitModels?: Record<string, string>;
   refresh?: boolean;
+}
+
+/**
+ * The preset a run uses when the line names none: the settings default, or `auto` when the
+ * person configured no Rubber Duck provider themselves. Undefined means "run what Rubber Duck
+ * already has".
+ */
+export function defaultPresetName(
+  settings: ResolvedSettings,
+  deps: Pick<CliDependencies, 'envSnapshot' | 'homeDirectory'>
+): string | undefined {
+  if (settings.values.defaultPreset) return settings.values.defaultPreset;
+  return providersConfigured(deps.envSnapshot, deps.homeDirectory) ? undefined : DEFAULT_PRESET;
 }
 
 /** Discovery configuration for this process: session-home cache, injected runner and clock. */
@@ -70,9 +91,9 @@ export function resolvePresetModels(
 }
 
 /**
- * Apply `--preset NAME` (or the settings default when the line names none) to the environment
- * before any Rubber Duck subprocess starts, with the models resolved for the current policy.
- * With `strict`, missing vendor CLIs abort early instead of failing minutes later in preflight.
+ * Apply `--preset NAME` (or `defaultName` when the line names none) to the environment before
+ * any Rubber Duck subprocess starts, with the models resolved for the current policy. With
+ * `strict`, missing vendor CLIs abort early instead of failing minutes later in preflight.
  */
 export async function selectPreset(
   parsed: ParsedArguments,
@@ -83,7 +104,11 @@ export async function selectPreset(
   const name = flag(parsed, '--preset') ?? options.defaultName;
   if (name === undefined) return undefined;
   if (name === 'true') throw new Error('--preset requires a name; run `hc presets` to list them');
-  const preset = findPreset(name);
+  const preset = findPreset(name, deps.locateCommand);
+  if (preset.name === DEFAULT_PRESET && preset.providers.length === 0) {
+    if (strict) throw new Error(NO_PROVIDER_CLI_MESSAGE);
+    return { preset, models: {} };
+  }
   const missing = missingPresetCommands(preset, deps.env, deps.platform, deps.locateCommand);
   if (strict && missing.length > 0) {
     throw new Error(

@@ -8,6 +8,7 @@ import { resolvePresetModels } from './preset-selection.js';
 import { findPreset, type CouncilPreset } from './presets.js';
 import { resolveStoreSettings, settingsFlags } from './settings-command.js';
 
+/** The only preset with model slots, so `hc models` shows it unless settings name another. */
 export const DEFAULT_MODELS_PRESET = 'frontier';
 
 function describeDiscovered(model: DiscoveredModel): string {
@@ -86,7 +87,7 @@ export async function executeModels(
   const settings = resolveStoreSettings(store, deps.env, settingsFlags(parsed));
   const name = flag(parsed, '--preset') ?? settings.values.defaultPreset ?? DEFAULT_MODELS_PRESET;
   if (name === 'true') throw new Error('--preset requires a name; run `hc presets` to list them');
-  const preset = findPreset(name);
+  const preset = findPreset(name, deps.locateCommand);
   const result = await resolvePresetModels(preset, deps, {
     store,
     settings,

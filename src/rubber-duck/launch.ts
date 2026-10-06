@@ -103,6 +103,9 @@ export function rubberDuckEnvironment(
   codexModel?: string
 ): Record<string, string> {
   const environment = definedEnvironment(source);
+  // Rubber Duck logs every provider start-up at info level on the inherited stderr; keep the
+  // terminal quiet unless the person asked for more.
+  if (!environment.LOG_LEVEL) environment.LOG_LEVEL = 'warn';
   if (environment.HYPOTHESIS_COUNCIL_DISABLE_STDIN_COMPATIBILITY === 'true') {
     return environment;
   }

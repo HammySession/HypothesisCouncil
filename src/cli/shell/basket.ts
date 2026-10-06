@@ -156,7 +156,7 @@ export function basketPreviewLines(built: BuiltContext, basket: ContextBasket): 
     `Context basket: ${manifest.files.length} file${manifest.files.length === 1 ? '' : 's'}, ${formatBytes(manifest.packetBytes)} of ${formatBytes(manifest.maxBytes)}${basket.markdownOnly ? ' (Markdown only)' : ''}`,
   ];
   for (const file of manifest.files.slice(0, 20)) lines.push(`  + ${file.path}`);
-  if (manifest.files.length > 20) lines.push(`  … and ${manifest.files.length - 20} more`);
+  if (manifest.files.length > 20) lines.push(`  ... and ${manifest.files.length - 20} more`);
   for (const path of manifest.deniedPaths.slice(0, 10)) lines.push(`  - denied ${path}`);
   if (manifest.unmatchedRequestedPaths?.length) {
     lines.push(`  ! no files matched: ${manifest.unmatchedRequestedPaths.join(', ')}`);

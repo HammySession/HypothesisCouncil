@@ -30,11 +30,13 @@ function known(contextWindowTokens: number, reservedOutputTokens: number): Model
 
 /**
  * Static context windows by model id. A `[1m]` suffix means a one-million-token profile on any
- * vendor; bare Claude aliases (`fable`, `opus`, `sonnet`, `haiku`) count as Claude models.
+ * vendor; bare Claude aliases (`fable`, `opus`, `sonnet`, `haiku`) count as Claude models. GPT-6
+ * uses the window the Codex catalog reports, since Codex is the council's only route to it.
  */
 function modelLimit(model: string, provider: string): ModelLimitMatch {
   const identity = `${provider} ${model}`.toLowerCase();
   const oneMillion = /\[1m\]/.test(model.toLowerCase());
+  if (/gpt-6/.test(identity)) return known(272_000, 32_000);
   if (/gpt-5\.[4-9]/.test(identity)) return known(1_050_000, 128_000);
   if (/gpt-5|codex/.test(identity)) return known(400_000, 128_000);
   if (/gpt-4\.1/.test(identity)) return known(1_047_576, 32_768);

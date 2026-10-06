@@ -1,7 +1,7 @@
 {
   "name": "hypothesis-council",
   "version": "0.1.0",
-  "description": "An inspectable hypothesis-generation council built on MCP Rubber Duck",
+  "description": "A council of AI coding agents that generate, review, and attack hypotheses about your code",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -12,35 +12,40 @@
   },
   "files": [
     "dist",
-    "docs",
-    "scripts",
+    "docs/*.md",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "prepare": "npm run build",
     "clean": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "cli": "node dist/cli/hypothesis-council.js",
     "doctor": "node dist/cli/hypothesis-council.js doctor",
-    "stock:markdown": "node scripts/run-stock-embeddings-markdown.mjs",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "lint": "eslint src",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm run lint && npm test -- --runInBand && npm run build"
   },
   "keywords": [
+    "hypothesis",
+    "research",
+    "council",
+    "cli",
     "mcp",
     "model-context-protocol",
     "llm",
-    "openai",
-    "ai",
+    "claude",
+    "codex",
+    "gemini",
+    "grok",
     "rubber-duck"
   ],
-  "mcpName": "io.github.hammysession/hypothesis-council",
   "author": "Hypothesis Council contributors",
   "license": "MIT",
   "engines": {
@@ -55,7 +60,6 @@
     "url": "https://github.com/HammySession/HypothesisCouncil/issues"
   },
   "publishConfig": {
-    "provenance": true,
     "access": "public"
   },
   "dependencies": {

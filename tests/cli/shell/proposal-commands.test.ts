@@ -257,6 +257,6 @@ describe('proposal shell commands', () => {
     const done = proposals.load(session.id);
     expect(done.stage).toBe('completed');
     expect(done.handoffs.at(-1)).toMatchObject({ id: 'X-002', status: 'completed', exitCode: 0 });
-    expect(ctx.io.text()).toContain('Handoff: X-002 → fake (completed)');
+    expect(ctx.io.text()).toContain('Handoff: X-002 -> fake (completed)');
   }, 30_000);
 });

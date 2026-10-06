@@ -160,7 +160,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
   } catch (error) {
     report.problems.push(error instanceof Error ? error.message : String(error));
     report.hints.push(
-      'Enable at least one provider (for example `CLI_CLAUDE_ENABLED=true`) or run with `--preset quick`.'
+      'Enable at least one provider (for example `CLI_CLAUDE_ENABLED=true`) or run with `--preset auto`.'
     );
     return report;
   }
@@ -292,7 +292,7 @@ export function doctorText(report: DoctorReport): string {
         ? provider.probe.ok
           ? `ok ${(provider.probe.latencyMs / 1000).toFixed(1)}s "${provider.probe.reply}"`
           : `FAILED ${(provider.probe.latencyMs / 1000).toFixed(1)}s`
-        : '—',
+        : '-',
     ]);
     lines.push(
       ...table(['PROVIDER', 'MODEL', 'WINDOW', 'TRANSPORT', 'WEB', 'COMMAND', 'PROBE'], rows)

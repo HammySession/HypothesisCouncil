@@ -148,7 +148,7 @@ export function editTags(
   }
 }
 
-/** `hc tag [SESSION] …`; the session defaults to the current one. */
+/** `hc tag [SESSION] ...`; the session defaults to the current one. */
 export function executeTag(
   words: string[],
   store: ResearchSessionStore,

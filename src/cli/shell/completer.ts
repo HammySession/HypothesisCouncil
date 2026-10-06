@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, statSync } from 'fs';
-import { dirname, join, resolve } from 'path';
+import { join, resolve } from 'path';
 import { openQuestions } from '../../research/proposal/interview.js';
 import { isProposalId, proposalStoreFor } from '../../research/proposal/store.js';
 import type { ShellContext } from './context.js';
@@ -116,9 +116,4 @@ export function createShellCompleter(
     }
     return [[], word];
   };
-}
-
-/** The directory part of a completed path, for tests and prompts. */
-export function completionRoot(root: string, prefix: string): string {
-  return dirname(resolve(root, prefix || '.'));
 }

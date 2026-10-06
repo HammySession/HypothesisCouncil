@@ -63,7 +63,7 @@ export function proposalBodyLines(proposal: MergedProposal | ProposalDraft): str
   return lines;
 }
 
-function questionLines(question: InterviewQuestion, session: ProposalSession): string[] {
+function questionLines(question: InterviewQuestion): string[] {
   const answer =
     question.status === 'answered'
       ? (question.answer ?? '')
@@ -73,7 +73,6 @@ function questionLines(question: InterviewQuestion, session: ProposalSession): s
           ? `_(covered by ${question.resolvedBy ?? 'an earlier answer'})_`
           : '_(not answered)_';
   const asked = question.askedByCount > 1 ? ` · asked by ${question.askedByCount} members` : '';
-  void session;
   return [
     `**${question.id}** (${question.priority}${asked}): ${question.question}`,
     '',
@@ -101,7 +100,7 @@ export function renderTranscriptMarkdown(session: ProposalSession): string {
     lines.push(`## Round ${round.round}`, '');
     const questions = session.questions.filter((question) => question.round === round.round);
     if (questions.length === 0) lines.push('No new questions this round.', '');
-    for (const question of questions) lines.push(...questionLines(question, session));
+    for (const question of questions) lines.push(...questionLines(question));
   }
   return lines.join('\n');
 }
@@ -114,7 +113,7 @@ function draftSummaryLines(session: ProposalSession): string[] {
     const verdicts = critiques.map((critique) => critique.verdict).join(', ') || 'no critique';
     const objection = critiques[0]?.strongestObjection;
     const fatal = critiques.find((critique) => critique.fatalGap)?.fatalGap;
-    return `- **${draft.rank ?? '—'}. ${draft.id} — ${draft.title}** · score ${draft.score?.toFixed(2) ?? 'n/a'} · ${verdicts}${fatal ? ` · fatal gap: ${fatal}` : ''}${objection ? `\n  - Strongest objection: ${objection}` : ''}`;
+    return `- **${draft.rank ?? '-'}. ${draft.id}: ${draft.title}** · score ${draft.score?.toFixed(2) ?? 'n/a'} · ${verdicts}${fatal ? ` · fatal gap: ${fatal}` : ''}${objection ? `\n  - Strongest objection: ${objection}` : ''}`;
   });
 }
 
@@ -173,7 +172,7 @@ export function renderDraftMarkdown(session: ProposalSession, draft: ProposalDra
   const lines = [
     `# Draft ${draft.id}: ${draft.title}`,
     '',
-    `Session ${session.id} · rank ${draft.rank ?? '—'} · score ${draft.score?.toFixed(2) ?? 'n/a'}`,
+    `Session ${session.id} · rank ${draft.rank ?? '-'} · score ${draft.score?.toFixed(2) ?? 'n/a'}`,
     '',
     ...proposalBodyLines(draft),
   ];

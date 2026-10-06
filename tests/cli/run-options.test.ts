@@ -3,11 +3,11 @@ import { createRunInput, DEFAULT_REPOSITORY_GOAL } from '../../src/cli/run-optio
 
 describe('createRunInput', () => {
   it('turns a bare hc run into a current-repository analysis', () => {
-    const input = createRunInput({ goalParts: [], contextPaths: [] }, '/work/stock_embeddings');
+    const input = createRunInput({ goalParts: [], contextPaths: [] }, '/work/example-project');
 
     expect(input).toMatchObject({
       goal: DEFAULT_REPOSITORY_GOAL,
-      contextRoot: resolve('/work/stock_embeddings'),
+      contextRoot: resolve('/work/example-project'),
       contextPaths: ['.'],
       markdownOnly: false,
     });
@@ -18,7 +18,7 @@ describe('createRunInput', () => {
       {
         goalParts: ['Find', 'data leakage'],
         contextPaths: ['README.md', 'docs'],
-        repositoryPath: '../stock_embeddings',
+        repositoryPath: '../example-project',
         markdownOnly: true,
       },
       '/work/hypothesis-council'
@@ -26,7 +26,7 @@ describe('createRunInput', () => {
 
     expect(input).toMatchObject({
       goal: 'Find data leakage',
-      contextRoot: resolve('/work/stock_embeddings'),
+      contextRoot: resolve('/work/example-project'),
       contextPaths: ['README.md', 'docs'],
       markdownOnly: true,
     });

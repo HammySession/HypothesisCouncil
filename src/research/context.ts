@@ -106,7 +106,6 @@ const ROOT_PRIORITY_FILES = new Set([
 
 export interface ContextBuildOptions {
   markdownOnly?: boolean;
-  maxFileBytes?: number;
   /** Bytes of `maxBytes` to hold back from files for an appendix added later with `withAppendix`. */
   reserveBytes?: number;
 }
@@ -367,12 +366,6 @@ export function buildContextPacket(
   if (!Number.isInteger(maxBytes) || maxBytes <= 0) {
     throw new Error('maxBytes must be a positive integer');
   }
-  if (
-    options.maxFileBytes !== undefined &&
-    (!Number.isInteger(options.maxFileBytes) || options.maxFileBytes <= 0)
-  ) {
-    throw new Error('maxFileBytes must be a positive integer');
-  }
   const reserveBytes = options.reserveBytes ?? 0;
   if (!Number.isInteger(reserveBytes) || reserveBytes < 0 || reserveBytes >= maxBytes) {
     throw new Error('reserveBytes must be a non-negative integer smaller than maxBytes');
@@ -382,7 +375,6 @@ export function buildContextPacket(
   const repositoryManifest = buildRepositoryManifest(collected.files, fileBudget);
   const manifestSeparator = repositoryManifest ? 2 : 0;
   const availableAfterManifest = fileBudget - byteLength(repositoryManifest) - manifestSeparator;
-  const maxFileBytes = options.maxFileBytes ?? Number.MAX_SAFE_INTEGER;
   let selected = collected.files.filter((file) => file.textBytes.byteLength > 0);
 
   while (selected.length > 0) {
@@ -401,17 +393,14 @@ export function buildContextPacket(
   const fairShare = selected.length === 0 ? 0 : Math.floor(contentBudget / selected.length);
   let remaining = contentBudget;
   for (const file of selected) {
-    const allocated = Math.min(file.textBytes.byteLength, maxFileBytes, fairShare);
+    const allocated = Math.min(file.textBytes.byteLength, fairShare);
     allocations.set(file.absolutePath, allocated);
     remaining -= allocated;
   }
   for (const file of selected) {
     if (remaining <= 0) break;
     const current = allocations.get(file.absolutePath) || 0;
-    const additional = Math.min(
-      remaining,
-      Math.max(0, Math.min(file.textBytes.byteLength, maxFileBytes) - current)
-    );
+    const additional = Math.min(remaining, Math.max(0, file.textBytes.byteLength - current));
     allocations.set(file.absolutePath, current + additional);
     remaining -= additional;
   }
@@ -465,8 +454,6 @@ export function buildContextPacket(
   if (reserveBytes > 0) manifest.reservedBytes = reserveBytes;
   return { packet, manifest };
 }
-
-export const EMPTY_PACKET_NOTICE = '(No research context files supplied.)';
 
 /**
  * Append a block (the SOURCES section) to a built packet and re-seal the manifest: the packet

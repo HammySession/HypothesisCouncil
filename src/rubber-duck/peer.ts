@@ -6,6 +6,7 @@ import {
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { resolveRubberDuckLaunch, type RubberDuckLaunchOptions } from './launch.js';
+import { VERSION } from '../version.js';
 
 export interface McpToolDescription {
   name: string;
@@ -90,7 +91,7 @@ export function createSdkMcpPeer(
 ): SdkMcpPeer {
   const launch = resolveRubberDuckLaunch(workingDirectory, launchOptions);
   const client =
-    dependencies.client || new Client({ name: 'hypothesis-council', version: '0.1.0' });
+    dependencies.client || new Client({ name: 'hypothesis-council', version: VERSION });
   const transport =
     dependencies.transport || new StdioClientTransport(launch satisfies StdioServerParameters);
   return new SdkMcpPeer(client, transport);

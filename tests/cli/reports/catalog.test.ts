@@ -96,7 +96,7 @@ describe('report catalog', () => {
     );
     expect(text).toContain('perf, leak, find, hunt');
     expect(text).toMatch(
-      /2\s+RC-20260827-000000Z-abc123\s+2026-08-27 00:00\s+COMPLETE\s+—\s+2\s+Explain the drift/
+      /2\s+RC-20260827-000000Z-abc123\s+2026-08-27 00:00\s+COMPLETE\s+-\s+2\s+Explain the drift/
     );
     expect(reportsText([])).toContain('No reports yet');
   });

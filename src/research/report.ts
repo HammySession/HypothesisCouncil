@@ -73,7 +73,7 @@ export function createPublicReport(session: ResearchSession): Record<string, unk
     methodNotes: [
       'Initial generation was independent across providers.',
       'Reviews hid explicit author-provider labels; writing style was not normalized.',
-      'Ranking is a deterministic prototype review aggregate, not a probability of truth.',
+      'Ranking is a deterministic review aggregate, not a probability of truth.',
       'Ranking weights, penalties, and gates follow the novelty and skepticism dials recorded under the session configuration.',
       'Novelty is relative to supplied context; no literature verification was performed.',
       'Context-based evidence quotes were checked mechanically against the shared packet; general-knowledge evidence is unverified literature memory.',
@@ -123,7 +123,7 @@ function sourceLines(session: ResearchSession): string[] {
       ...sources.map((source) => {
         const link = source.url ? `[${source.title}](${source.url})` : source.title;
         const doi = source.doi ? ` (doi:${source.doi})` : '';
-        return `| ${source.id} | ${source.kind} | ${link.replace(/\|/g, '\\|')}${doi} | ${source.year ?? '—'} | ${sourceStatus(source)} | ${source.critique ? `${source.critique.reliability}/10` : '—'} | ${source.critique?.replication ?? '—'} |`;
+        return `| ${source.id} | ${source.kind} | ${link.replace(/\|/g, '\\|')}${doi} | ${source.year ?? '-'} | ${sourceStatus(source)} | ${source.critique ? `${source.critique.reliability}/10` : '-'} | ${source.critique?.replication ?? '-'} |`;
       }),
       ''
     );
@@ -152,9 +152,9 @@ function penaltyNote(candidate: HypothesisCandidate): string {
   const penalties = candidate.scorePenalties;
   if (!penalties) return '';
   const parts: string[] = [];
-  if (penalties.crowding) parts.push(`crowding −${penalties.crowding.toFixed(2)}`);
+  if (penalties.crowding) parts.push(`crowding -${penalties.crowding.toFixed(2)}`);
   if (penalties.unsupportedEvidence) {
-    parts.push(`unsupported evidence −${penalties.unsupportedEvidence.toFixed(2)}`);
+    parts.push(`unsupported evidence -${penalties.unsupportedEvidence.toFixed(2)}`);
   }
   return parts.length > 0 ? ` (${parts.join(', ')})` : '';
 }
@@ -223,10 +223,10 @@ export function renderMarkdownReport(session: ResearchSession): string {
     const attack = attacks.find((item) => (item.round ?? 1) === 1) ?? attacks[0];
     const laterAttacks = attacks.filter((item) => item !== attack);
     const evidenceLine = lacksVerifiedContextEvidence(candidate.evidence)
-      ? `${describeEvidence(candidate.evidence)} — no verified context evidence; the claim rests on unverified memory or speculation`
+      ? `${describeEvidence(candidate.evidence)}. No verified context evidence: the claim rests on unverified memory or speculation`
       : describeEvidence(candidate.evidence);
     lines.push(
-      `### ${candidate.rank || '—'}. ${candidate.id} — ${candidate.title}${candidate.variant === 'out-of-box' ? ' (out-of-the-box batch)' : ''}`,
+      `### ${candidate.rank || '-'}. ${candidate.id}: ${candidate.title}${candidate.variant === 'out-of-box' ? ' (out-of-the-box batch)' : ''}`,
       '',
       `**Claim:** ${candidate.claim}`,
       '',
@@ -263,7 +263,7 @@ export function renderMarkdownReport(session: ResearchSession): string {
     '',
     ...session.candidates
       .filter((candidate) => candidate.status === 'duplicate')
-      .map((candidate) => `- ${candidate.id} (${candidate.title}) → ${candidate.duplicateOf}`),
+      .map((candidate) => `- ${candidate.id} (${candidate.title}) -> ${candidate.duplicateOf}`),
     ''
   );
 
@@ -291,7 +291,6 @@ export function renderMarkdownReport(session: ResearchSession): string {
     '- Authorship-label blinding does not remove provider-specific writing style.',
     '- Novelty was judged only against the supplied context.',
     '- Evidence verification checks quotes against the shared packet; it cannot validate general-knowledge claims, which remain unverified literature memory.',
-    '- This first slice defers pairwise Elo, evolution, and literature verification.',
     '',
     ...configurationLines(session),
     '## Context and reproducibility',

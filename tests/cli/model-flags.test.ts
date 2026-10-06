@@ -16,7 +16,7 @@ describe('model flags', () => {
 
   it('rejects entries without KEY=ID', () => {
     expect(() => parseModelFlags(parseArguments(['--model', 'gpt-5.5']))).toThrow(
-      '--model expects KEY=ID (for example --model codex=gpt-5.6-sol), got "gpt-5.5"'
+      '--model expects KEY=ID (for example --model codex=gpt-6.1-sol), got "gpt-5.5"'
     );
     expect(() => parseModelFlags(parseArguments(['--model', 'codex=']))).toThrow(
       '--model expects KEY=ID'

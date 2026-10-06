@@ -55,3 +55,9 @@ temp/
 
 # Backup files
 *.backup
+
+# npm pack output
+*.tgz
+
+# Local assistant settings
+.claude/

@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import type { SourceVerificationMode } from './dials.js';
 import type { SourceRecord, SourceVerificationRecord } from './sources.js';
+import { VERSION } from '../version.js';
 
 /**
  * Mechanical existence check for cited sources. A fetch proves that a URL resolves to something
@@ -20,7 +21,6 @@ export interface FetchSourceVerifierOptions {
   concurrency?: number;
   maxRedirects?: number;
   now?: () => Date;
-  userAgent?: string;
 }
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -176,7 +176,7 @@ export function createFetchSourceVerifier(
   const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
   const now = options.now ?? (() => new Date());
-  const userAgent = options.userAgent ?? 'hypothesis-council/0.1 (source verification)';
+  const userAgent = `hypothesis-council/${VERSION} (source verification)`;
 
   const fetchOnce = async (
     target: string,

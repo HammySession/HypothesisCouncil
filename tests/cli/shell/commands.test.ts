@@ -25,7 +25,7 @@ describe('interactive shell commands', () => {
     expect(ctx.io.text()).toContain('1.   H-002  Title H-002  [review 7.50 · accept · novelty 7]');
 
     await dispatchShellLine(ctx, '/show 1');
-    expect(ctx.io.text()).toContain('H-001 — Title H-001');
+    expect(ctx.io.text()).toContain('H-001: Title H-001');
     expect(ctx.io.text()).not.toContain('duck-b');
     await expect(dispatchShellLine(ctx, '/show')).rejects.toThrow('Usage: /show H-001');
   });
@@ -116,7 +116,7 @@ describe('interactive shell commands', () => {
   it('lists, opens, tags, and summarises reports from the shell', async () => {
     await dispatchShellLine(ctx, '/reports');
     expect(ctx.io.text()).toMatch(
-      /1\s+RC-20260827-000000Z-abc123\s+2026-08-27 00:00\s+COMPLETE\s+—\s+2\s+Explain the drift\s+drift, title/
+      /1\s+RC-20260827-000000Z-abc123\s+2026-08-27 00:00\s+COMPLETE\s+-\s+2\s+Explain the drift\s+drift, title/
     );
     expect(ctx.io.outLines.at(-1)).toBe(
       'Open one with /open N (or /open index for the gallery); tag with /tag.'

@@ -15,9 +15,6 @@ import { chatTurns, priorTurnLines, rememberProviders, type ShellContext } from 
 import { loadSelectedProposal, proposalSelected } from './proposal-scope.js';
 import { resolveProviderSelection, splitMentions, type ProviderName } from './providers.js';
 
-export const CHAT_NOTICE =
-  'Chat replies are conversational: they never feed council stages or change rankings.';
-
 /** Bytes kept free for the chat framing and question when a basket packet is attached. */
 export const CHAT_PACKET_OVERHEAD_BYTES = 8 * 1024;
 
@@ -51,7 +48,7 @@ export function replyText(replies: ChatReply[]): string {
       const label = [reply.provider, reply.model, formatDuration(reply.elapsedMs)]
         .filter(Boolean)
         .join(' · ');
-      return `— ${label}\n${reply.text ?? `error: ${reply.error ?? 'no reply'}`}`;
+      return `[${label}]\n${reply.text ?? `error: ${reply.error ?? 'no reply'}`}`;
     })
     .join('\n\n');
 }

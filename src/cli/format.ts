@@ -101,7 +101,7 @@ export function candidatesText(session: ResearchSession): string {
   }
   const crowded = new Set(session.consensusCrowding?.crowdedCandidateIds ?? []);
   const rows = orderedCandidates(session).map((candidate) => {
-    const rank = candidate.rank ? `${candidate.rank}.` : '—';
+    const rank = candidate.rank ? `${candidate.rank}.` : '-';
     const score = candidate.score === undefined ? 'pending' : candidate.score.toFixed(2);
     const review = session.reviews.find((item) => item.hypothesisId === candidate.id);
     const markers = [
@@ -122,17 +122,17 @@ export function candidateText(session: ResearchSession, candidateId: string): st
   const review = session.reviews.find((item) => item.hypothesisId === candidate.id);
   const attacks = session.falsifications.filter((item) => item.hypothesisId === candidate.id);
   return [
-    `${candidate.id} — ${candidate.title}`,
+    `${candidate.id}: ${candidate.title}`,
     `Status: ${candidate.status}${candidate.duplicateOf ? ` of ${candidate.duplicateOf}` : ''}${candidate.variant === 'out-of-box' ? ' · out-of-the-box batch' : ''}`,
     `Claim: ${candidate.claim}`,
     `Mechanism: ${candidate.mechanism}`,
     `Predictions: ${candidate.predictions.join('; ')}`,
     `Assumptions: ${candidate.assumptions.join('; ') || 'None recorded'}`,
-    `Differs from consensus: ${candidate.differsFromConsensus || 'Not recorded (pre-upgrade session)'}`,
+    `Differs from consensus: ${candidate.differsFromConsensus || 'Not recorded'}`,
     `Evidence: ${describeEvidence(candidate.evidence)}`,
     `Falsifier: ${candidate.falsifier}${review?.killCriterion ? ` (graded ${review.killCriterion})` : ''}`,
     `Minimal experiment: ${candidate.minimalExperiment}`,
-    `Review: ${review?.verdict || 'pending'}${review ? ` — ${review.strongestObjection}` : ''}`,
+    `Review: ${review?.verdict || 'pending'}${review ? `; strongest objection: ${review.strongestObjection}` : ''}`,
     `Adversarial attack: ${attacks[0]?.competingExplanation || 'not selected/pending'}`,
     ...attacks
       .slice(1)
@@ -150,10 +150,10 @@ export function runPreviewLines(preview: ResearchRunPreview): string[] {
   );
   const calls = preview.plannedCalls;
   const callParts = [
-    `${calls.generation} generation × ${preview.hypothesesPerProvider} hypotheses`,
+    `${calls.generation} generation x ${preview.hypothesesPerProvider} hypotheses`,
   ];
   if (calls.outOfBox > 0) {
-    callParts.push(`${calls.outOfBox} out-of-the-box × ${preview.policy.outOfBoxHypotheses}`);
+    callParts.push(`${calls.outOfBox} out-of-the-box x ${preview.policy.outOfBoxHypotheses}`);
   }
   callParts.push(`up to ${calls.review} reviews`);
   callParts.push(
@@ -174,7 +174,7 @@ export function runPreviewLines(preview: ResearchRunPreview): string[] {
   if (sources) {
     const scouts =
       sources.scouts.length > 0
-        ? `${sources.scouts.join(', ')} (${sources.rounds} round${sources.rounds === 1 ? '' : 's'} × ${sources.sourcesPerScout} sources each)`
+        ? `${sources.scouts.join(', ')} (${sources.rounds} round${sources.rounds === 1 ? '' : 's'} x ${sources.sourcesPerScout} sources each)`
         : 'none';
     lines.push(
       `Sources: ${sources.userSources} supplied${sources.sourcesFile ? ` from ${sources.sourcesFile}` : ''}; web scouts: ${scouts}; verification: ${sources.verification}; critique: ${sources.critique ? 'on' : 'off'}; ${formatBytes(sources.reservedBytes)} reserved for the SOURCES appendix`
@@ -219,7 +219,7 @@ export function runSummaryText(session: ResearchSession, options: RunSummaryOpti
       const review = session.reviews.find((item) => item.hypothesisId === candidate.id);
       const score = candidate.score === undefined ? 'pending' : candidate.score.toFixed(2);
       lines.push(
-        `  ${candidate.rank ?? '—'}. ${candidate.id}  ${candidate.title}  [review ${score}${review ? ` · ${review.verdict}` : ''}]`
+        `  ${candidate.rank ?? '-'}. ${candidate.id}  ${candidate.title}  [review ${score}${review ? ` · ${review.verdict}` : ''}]`
       );
     }
   } else if (session.candidates.length === 0) {

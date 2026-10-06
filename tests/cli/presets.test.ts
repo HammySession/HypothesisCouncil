@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -11,6 +11,7 @@ import {
   modelsByProvider,
   pinnedModels,
   presetsText,
+  providersConfigured,
 } from '../../src/cli/presets.js';
 import { calculateContextBudget } from '../../src/research/context-budget.js';
 import { rubberDuckEnvironment } from '../../src/rubber-duck/launch.js';
@@ -29,7 +30,7 @@ describe('council presets', () => {
       CLI_CUSTOM_GROK_COMMAND: '/node/bin/node',
       CLI_CUSTOM_GROK_PROMPT_DELIVERY: 'stdin',
       CLI_CUSTOM_GROK_CLI_ARGS:
-        '/hc/dist/rubber-duck/stdin-shim.js,prompt-file,--,grok,-m,grok-4.6,--reasoning-effort,xhigh,--disable-web-search',
+        '/hc/dist/rubber-duck/stdin-shim.js,prompt-file,--,grok,-m,grok-4.7,--reasoning-effort,xhigh,--disable-web-search',
       CLI_CUSTOM_GROK_PROCESS_TIMEOUT: '900000',
       CLI_CUSTOM_AGY_COMMAND: '/node/bin/node',
       CLI_CUSTOM_AGY_PROMPT_DELIVERY: 'stdin',
@@ -39,12 +40,12 @@ describe('council presets', () => {
       CLI_CUSTOM_AGY_DEFAULT_MODEL: 'gemini-3.8-flash-high',
       HYPOTHESIS_COUNCIL_CONTEXT_TOKENS_CLI_AGY: '1000000',
       CLI_CLAUDE_ENABLED: 'true',
-      CLI_CLAUDE_DEFAULT_MODEL: 'claude-fable-5[1m]',
+      CLI_CLAUDE_DEFAULT_MODEL: 'claude-fable-5-1[1m]',
       HYPOTHESIS_COUNCIL_CONTEXT_TOKENS_CLI_CLAUDE: '1000000',
       CLI_CODEX_ENABLED: 'true',
-      CLI_CODEX_DEFAULT_MODEL: 'gpt-5.6-sol',
+      CLI_CODEX_DEFAULT_MODEL: 'gpt-6.1-sol',
       HYPOTHESIS_COUNCIL_CODEX_REASONING_EFFORT: 'xhigh',
-      HYPOTHESIS_COUNCIL_CONTEXT_TOKENS_CLI_CODEX: '1050000',
+      HYPOTHESIS_COUNCIL_CONTEXT_TOKENS_CLI_CODEX: '272000',
       HYPOTHESIS_COUNCIL_PROVIDER_TIMEOUT_MS: '900000',
     });
     expect(environment.HYPOTHESIS_COUNCIL_CONTEXT_TOKENS_CLI_GROK).toBeUndefined();
@@ -128,7 +129,7 @@ describe('council presets', () => {
     expect(environment.HYPOTHESIS_COUNCIL_CONTEXT_TOKENS_CLI_CLAUDE).toBeUndefined();
 
     expect(describeModels(preset, pins)).toBe(
-      'grok=grok-4.6 (pinned) · agy=gemini-3.8-flash-high (pinned) · claude=claude-fable-5[1m] (pinned) · codex=gpt-5.6-sol (pinned)'
+      'grok=grok-4.7 (pinned) · agy=gemini-3.8-flash-high (pinned) · claude=claude-fable-5-1[1m] (pinned) · codex=gpt-6.1-sol (pinned)'
     );
     expect(Object.keys(modelsByProvider(preset, pins))).toEqual([
       'cli-grok',
@@ -156,11 +157,11 @@ describe('council presets', () => {
     expect(environment.CLI_CODEX_DEFAULT_MODEL).toBe('gpt-5.5');
     expect(environment.CLI_GROK_DEFAULT_MODEL).toBe('grok-4.5');
     expect(environment.HYPOTHESIS_COUNCIL_CONTEXT_TOKENS_CLI_CLAUDE).toBe('150000');
-    expect(environment.CLI_CLAUDE_DEFAULT_MODEL).toBe('claude-fable-5[1m]');
+    expect(environment.CLI_CLAUDE_DEFAULT_MODEL).toBe('claude-fable-5-1[1m]');
   });
 
   it('rejects unknown presets with the available names', () => {
-    expect(() => findPreset('nope')).toThrow('Available presets: frontier, quick');
+    expect(() => findPreset('nope')).toThrow('Available presets: auto, frontier, quick');
   });
 
   it('reports which required vendor CLIs are missing from PATH', () => {
@@ -176,12 +177,51 @@ describe('council presets', () => {
     ]);
   });
 
+  it('builds the auto preset from the vendor CLIs that are installed', () => {
+    const both = findPreset('auto', (command) => `/bin/${command}`);
+    expect(both.providers).toEqual(['cli-claude', 'cli-codex']);
+    expect(both.minProviders).toBe(2);
+    expect(both.requiredCommands).toEqual(['claude', 'codex']);
+    expect(both.scouts).toEqual(['claude', 'codex']);
+
+    const claudeOnly = findPreset('auto', (command) =>
+      command === 'claude' ? '/bin/claude' : undefined
+    );
+    expect(claudeOnly.providers).toEqual(['cli-claude']);
+    expect(claudeOnly.minProviders).toBe(1);
+    const environment: NodeJS.ProcessEnv = {};
+    applyPreset(claudeOnly, environment, { execPath: 'node', shimPath: 'shim.js' });
+    expect(environment.CLI_CLAUDE_ENABLED).toBe('true');
+    expect(environment.CLI_CODEX_ENABLED).toBeUndefined();
+    expect(environment.CLI_CUSTOM_CLAUDE_SCOUT_COMMAND).toBe('claude');
+    expect(environment.CLI_CUSTOM_CODEX_SCOUT_COMMAND).toBeUndefined();
+
+    const none = findPreset('auto', () => undefined);
+    expect(none.providers).toEqual([]);
+    expect(none.minProviders).toBe(0);
+  });
+
+  it('detects providers the person configured through Rubber Duck variables or its config file', () => {
+    const home = mkdtempSync(join(tmpdir(), 'hc-rd-home-'));
+    expect(providersConfigured({}, home)).toBe(false);
+    expect(providersConfigured({ PATH: '/bin', LOG_LEVEL: 'warn' }, home)).toBe(false);
+    expect(providersConfigured({ CLI_CLAUDE_ENABLED: 'true' }, home)).toBe(true);
+    expect(providersConfigured({ CLI_CUSTOM_LLAMA_COMMAND: 'llama' }, home)).toBe(true);
+    expect(providersConfigured({ OPENAI_API_KEY: 'sk-test' }, home)).toBe(true);
+    expect(providersConfigured({ CUSTOM_LOCAL_API_KEY: 'x' }, home)).toBe(true);
+    expect(providersConfigured({ CLI_CLAUDE_ENABLED: '  ' }, home)).toBe(false);
+    mkdirSync(join(home, '.mcp-rubber-duck'));
+    writeFileSync(join(home, '.mcp-rubber-duck', 'config.json'), '{}');
+    expect(providersConfigured({}, home)).toBe(true);
+    expect(providersConfigured({}, undefined)).toBe(false);
+  });
+
   it('describes every preset for hc presets', () => {
     const text = presetsText();
     for (const preset of PRESETS) {
       expect(text).toContain(preset.name);
       expect(text).toContain(`providers: ${preset.providers.join(', ')}`);
     }
-    expect(text).toContain('pinned models: grok=grok-4.6, agy=gemini-3.8-flash-high');
+    expect(text).toContain('pinned models: grok=grok-4.7, agy=gemini-3.8-flash-high');
   });
 });

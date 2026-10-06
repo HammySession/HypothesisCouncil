@@ -16,7 +16,7 @@ Inputs:
 - `context_root` (optional base directory for relative context paths)
 - `markdown_only` (optional boolean)
 - `hypotheses_per_provider`, `top_k`, `min_providers`, `seed`, `max_context_bytes` (optional)
-- `novelty`, `skepticism` (optional; 0–10 or `low`/`medium`/`high`). When omitted, the server
+- `novelty`, `skepticism` (optional; 0-10 or `low`/`medium`/`high`). When omitted, the server
   reads `HYPOTHESIS_COUNCIL_NOVELTY` / `HYPOTHESIS_COUNCIL_SKEPTICISM`, then the settings file in
   the session home, then defaults to 5.
 - `sources_file` (optional path to a JSON or Markdown sources file; see the README "Sources"
@@ -63,7 +63,7 @@ Inputs:
 - `providers`, `context_paths`, `context_root`, `markdown_only` (optional; as for the council tool)
 - `from_session_id` (optional council session to build on)
 - `interview` (optional boolean; `false` skips the interview and drafts immediately)
-- `max_rounds` (optional integer 1–5; interview rounds the council may ask for)
+- `max_rounds` (optional integer 1-5; interview rounds the council may ask for)
 - `answers` (optional object mapping question ids such as `Q-001` to an answer string, or `null`
   to skip the question)
 - `novelty`, `skepticism` (optional; resolved as for the council tool)

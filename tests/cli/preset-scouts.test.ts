@@ -36,13 +36,13 @@ describe('preset web scouts', () => {
     expect(environment).toMatchObject({
       CLI_CUSTOM_CLAUDE_SCOUT_COMMAND: 'claude',
       CLI_CUSTOM_CLAUDE_SCOUT_PROMPT_DELIVERY: 'stdin',
-      CLI_CUSTOM_CLAUDE_SCOUT_DEFAULT_MODEL: 'claude-fable-5[1m]',
+      CLI_CUSTOM_CLAUDE_SCOUT_DEFAULT_MODEL: 'claude-fable-5-1[1m]',
       CLI_CUSTOM_CLAUDE_SCOUT_PROCESS_TIMEOUT: '900000',
       CLI_CUSTOM_CODEX_SCOUT_COMMAND: 'codex',
-      CLI_CUSTOM_CODEX_SCOUT_DEFAULT_MODEL: 'gpt-5.6-sol',
+      CLI_CUSTOM_CODEX_SCOUT_DEFAULT_MODEL: 'gpt-6.1-sol',
       CLI_CUSTOM_GROK_SCOUT_COMMAND: '/node/bin/node',
       CLI_CUSTOM_GROK_SCOUT_CLI_ARGS:
-        '/hc/dist/rubber-duck/stdin-shim.js,prompt-file,--,grok,-m,grok-4.6,--reasoning-effort,high',
+        '/hc/dist/rubber-duck/stdin-shim.js,prompt-file,--,grok,-m,grok-4.7,--reasoning-effort,high',
     });
     const claudeScout = environment.CLI_CUSTOM_CLAUDE_SCOUT_CLI_ARGS!.split(',');
     expect(claudeScout).toContain('--restricted');

@@ -107,6 +107,6 @@ describe('progress renderer', () => {
     renderer.finish();
 
     expect(output[0].length).toBeLessThanOrEqual('\r\x1b[2K'.length + 29);
-    expect(output[0].endsWith('…')).toBe(true);
+    expect(output[0].endsWith('...')).toBe(true);
   });
 });

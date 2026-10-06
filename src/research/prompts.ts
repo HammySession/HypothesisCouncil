@@ -139,7 +139,7 @@ ${NON_INTERACTIVE_NOTICE}
 Your previous response did not satisfy the structured contract. Convert it to valid JSON without adding unsupported claims. Return exactly ${count} hypotheses when the source contains enough proposals. Required shape:
 ${GENERATION_SHAPE}
 
-Evidence basis must be "context", "general-knowledge", "speculation", or "source" (only with a sourceId such as S-001 that the source text cites). Tag each entry from the source's own statements: when the source does not ground a claim in the provided research context, tag it "general-knowledge" or "speculation" — never invent a contextQuote or a sourceId. When the source does not state how a hypothesis differs from consensus, derive differsFromConsensus from its own predictions without inventing new ones.
+Evidence basis must be "context", "general-knowledge", "speculation", or "source" (only with a sourceId such as S-001 that the source text cites). Tag each entry from the source's own statements: when the source does not ground a claim in the provided research context, tag it "general-knowledge" or "speculation"; never invent a contextQuote or a sourceId. When the source does not state how a hypothesis differs from consensus, derive differsFromConsensus from its own predictions without inventing new ones.
 
 PREVIOUS_RESPONSE_BEGIN
 ${raw}
@@ -163,7 +163,7 @@ ${goal}
 HYPOTHESIS
 ${JSON.stringify(publicCandidate(candidate), null, 2)}
 
-Evidence entries are tagged by basis. "context" entries carry a verification field set mechanically against the shared research context; "source" entries carry a verification field set by checking the cited record, and may carry a reliability grade (1-10) and concerns from a separate critique. Treat "general-knowledge" and unverified entries as unsupported assertions — do not accept remembered literature on authority, and lower robustness when nothing verified carries the claim. A source graded below 4 for reliability, or whose replication is contested, does not carry a claim either. Score novelty high only when a competent textbook or survey would not already assert the claim; correct restatements of consensus deserve low novelty. Grade killCriterion on the declared falsifier: "concrete" when a specific achievable observation could refute the claim, "vague" when refutation is described but underspecified, "untestable" when nothing stated could refute it. An untestable falsifier gates the hypothesis below every testable one, so grade it on substance, not phrasing.
+Evidence entries are tagged by basis. "context" entries carry a verification field set mechanically against the shared research context; "source" entries carry a verification field set by checking the cited record, and may carry a reliability grade (1-10) and concerns from a separate critique. Treat "general-knowledge" and unverified entries as unsupported assertions: do not accept remembered literature on authority, and lower robustness when nothing verified carries the claim. A source graded below 4 for reliability, or whose replication is contested, does not carry a claim either. Score novelty high only when a competent textbook or survey would not already assert the claim; correct restatements of consensus deserve low novelty. Grade killCriterion on the declared falsifier: "concrete" when a specific achievable observation could refute the claim, "vague" when refutation is described but underspecified, "untestable" when nothing stated could refute it. An untestable falsifier gates the hypothesis below every testable one, so grade it on substance, not phrasing.
 
 ${block(skepticismGuidance(policy, 'review'))}Return JSON only:
 {"plausibility":1,"novelty":1,"testability":1,"falsifiability":1,"feasibility":1,"robustness":1,"killCriterion":"concrete","fatalFlaw":null,"strongestObjection":"...","hiddenAssumptions":["..."],"proposedDiscriminatingTest":"...","verdict":"uncertain","confidence":0.5}
@@ -175,7 +175,7 @@ export function buildReviewRepairPrompt(raw: string): string {
   return `${PROMPT_VERSIONS.reviewRepair}
 ${NON_INTERACTIVE_NOTICE}
 
-Convert the previous review to valid JSON without inventing a more favorable verdict. Required fields: plausibility, novelty, testability, falsifiability, feasibility, robustness (1-10); killCriterion (concrete, vague, or untestable — when the source review does not grade the declared falsifier, derive the grade from its own criticism without softening it); fatalFlaw (string or null); strongestObjection; hiddenAssumptions; proposedDiscriminatingTest; verdict; confidence (0-1).
+Convert the previous review to valid JSON without inventing a more favorable verdict. Required fields: plausibility, novelty, testability, falsifiability, feasibility, robustness (1-10); killCriterion (concrete, vague, or untestable; when the source review does not grade the declared falsifier, derive the grade from its own criticism without softening it); fatalFlaw (string or null); strongestObjection; hiddenAssumptions; proposedDiscriminatingTest; verdict; confidence (0-1).
 
 PREVIOUS_RESPONSE_BEGIN
 ${raw}

@@ -47,10 +47,6 @@ function candidateText(candidate: HypothesisCandidate): string {
   return `${candidate.title} ${candidate.claim}`;
 }
 
-export function candidateSimilarity(left: HypothesisCandidate, right: HypothesisCandidate): number {
-  return textSimilarity(candidateText(left), candidateText(right));
-}
-
 /**
  * Group items whose texts are at least `threshold` similar (transitively). Returns index groups,
  * each in ascending order and ordered by their first member, so the result does not depend on the

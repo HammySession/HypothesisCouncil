@@ -68,7 +68,5 @@ export const MergedProposalOutputSchema = ProposalDraftOutputSchema.extend({
 export type InterviewQuestionOutput = z.infer<typeof InterviewQuestionOutputSchema>;
 export type InterviewOutput = z.infer<typeof InterviewOutputSchema>;
 export type ExperimentStep = z.infer<typeof ExperimentStepSchema>;
-export type ProposalHypothesis = z.infer<typeof ProposalHypothesisSchema>;
 export type ProposalDraftOutput = z.infer<typeof ProposalDraftOutputSchema>;
 export type ProposalCritiqueOutput = z.infer<typeof ProposalCritiqueOutputSchema>;
-export type MergedProposalOutput = z.infer<typeof MergedProposalOutputSchema>;

@@ -74,6 +74,58 @@ describe('hc command line', () => {
     await expect(executeCommand(['show'], store, ctx)).rejects.toThrow('Usage: hc show H-001');
   });
 
+  it('prints the version and accepts --help and -h', async () => {
+    const store = createTestStore();
+    const ctx = createTestContext({ store });
+    expect(await executeCommand(['--version'], store, ctx)).toBe(0);
+    expect(ctx.io.outLines).toEqual([expect.stringMatching(/^\d+\.\d+\.\d+/)]);
+    const version = ctx.io.outLines[0];
+
+    ctx.io.outLines.length = 0;
+    expect(await executeCommand(['--help'], store, ctx)).toBe(0);
+    expect(ctx.io.outLines[0]).toBe(`Hypothesis Council ${version}`);
+    expect(ctx.io.text()).toContain('Start here:');
+
+    ctx.io.outLines.length = 0;
+    expect(await executeCommand(['-h'], store, ctx)).toBe(0);
+    expect(ctx.io.text()).toContain('Start here:');
+  });
+
+  it('seats whichever supported CLIs are installed when nothing is configured', async () => {
+    const store = createTestStore();
+    const bare = createTestContext({ store, rubberDuckConfigured: false });
+    expect(await executeCommand(['doctor'], store, bare)).toBe(1);
+    expect(bare.clients).toEqual([]);
+    expect(bare.io.text()).toContain('Preset: auto');
+    expect(bare.io.text()).toContain('no providers are configured');
+    expect(bare.io.text()).toContain('npm install -g @anthropic-ai/claude-code');
+
+    await expect(executeCommand(['run', 'goal', '--dry-run'], store, bare)).rejects.toThrow(
+      'No supported AI CLI was found on PATH'
+    );
+
+    const withClaude = createTestContext({
+      store,
+      rubberDuckConfigured: false,
+      commandsOnPath: ['claude'],
+      providers: [{ name: 'cli-claude', nickname: 'Claude', model: 'claude', type: 'cli' }],
+    });
+    writeFileSync(join(withClaude.cwd, 'README.md'), '# Demo\n');
+    expect(await executeCommand(['run', 'goal', '--dry-run'], store, withClaude)).toBe(0);
+    expect(withClaude.io.errLines).toContain('Preset: auto');
+    expect(withClaude.env.CLI_CLAUDE_ENABLED).toBe('true');
+    expect(withClaude.env.CLI_CODEX_ENABLED).toBeUndefined();
+
+    withClaude.io.outLines.length = 0;
+    expect(await executeCommand(['settings'], store, withClaude)).toBe(0);
+    expect(withClaude.io.text()).toMatch(/preset\s+auto\s+default \(no provider configured\)/);
+
+    withClaude.io.outLines.length = 0;
+    expect(await executeCommand(['presets'], store, withClaude)).toBe(0);
+    expect(withClaude.io.text()).toContain('auto');
+    expect(withClaude.io.text()).toContain('whichever are installed');
+  });
+
   it('returns a failing exit code when doctor finds problems', async () => {
     const store = createTestStore();
     const ctx = createTestContext({ store, providers: [] });
@@ -130,7 +182,7 @@ describe('hc command line', () => {
     ctx.io.outLines.length = 0;
     expect(await executeCommand(['models', '--model-policy', 'pinned'], store, ctx)).toBe(0);
     expect(ctx.io.text()).toContain('(policy: pinned)');
-    expect(ctx.io.text()).toContain('gpt-5.6-sol');
+    expect(ctx.io.text()).toContain('gpt-6.1-sol');
 
     ctx.io.outLines.length = 0;
     expect(await executeCommand(['models', '--preset', 'quick'], store, ctx)).toBe(0);
@@ -207,7 +259,7 @@ describe('hc command line', () => {
 
     expect(await executeCommand(['reports'], store, ctx)).toBe(0);
     expect(ctx.io.text()).toMatch(
-      /1\s+RC-20260827-000000Z-abc123\s+2026-08-27 00:00\s+COMPLETE\s+—\s+2\s+Explain the drift/
+      /1\s+RC-20260827-000000Z-abc123\s+2026-08-27 00:00\s+COMPLETE\s+-\s+2\s+Explain the drift/
     );
 
     ctx.io.outLines.length = 0;

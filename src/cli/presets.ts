@@ -1,3 +1,5 @@
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { resolveStdinShimPath } from '../rubber-duck/launch.js';
 import {
   scoutProfileEnvironment,
@@ -13,6 +15,20 @@ import {
 import { findCommand } from './path-lookup.js';
 
 const DEFAULT_PRESET_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** The preset used when a run names none and the person configured no providers themselves. */
+export const DEFAULT_PRESET = 'auto';
+
+/** Vendor CLIs the auto preset seats, in council order, with the Rubber Duck provider each becomes. */
+const AUTO_VENDORS: ReadonlyArray<{ command: ScoutVendor; provider: string }> = [
+  { command: 'claude', provider: 'cli-claude' },
+  { command: 'codex', provider: 'cli-codex' },
+];
+
+export const INSTALL_HINT =
+  'Install Claude Code (npm install -g @anthropic-ai/claude-code) or Codex (npm install -g @openai/codex), sign in once, then run hc doctor.';
+
+export const NO_PROVIDER_CLI_MESSAGE = `No supported AI CLI was found on PATH and no Rubber Duck provider is configured. ${INSTALL_HINT}`;
 
 /** One model a preset chooses per vendor; discovery may replace the pin under the `latest` policy. */
 export interface ModelSlot {
@@ -87,7 +103,7 @@ const FRONTIER_SLOTS: ModelSlot[] = [
     vendor: 'grok',
     providerName: 'cli-grok',
     modelEnvVars: ['CLI_CUSTOM_GROK_DEFAULT_MODEL', 'CLI_GROK_DEFAULT_MODEL'],
-    pinned: 'grok-4.6',
+    pinned: 'grok-4.7',
   },
   {
     key: 'agy',
@@ -102,7 +118,7 @@ const FRONTIER_SLOTS: ModelSlot[] = [
     vendor: 'claude',
     providerName: 'cli-claude',
     modelEnvVars: ['CLI_CLAUDE_DEFAULT_MODEL'],
-    pinned: 'claude-fable-5[1m]',
+    pinned: 'claude-fable-5-1[1m]',
     pinnedContextTokens: 1_000_000,
   },
   {
@@ -110,16 +126,48 @@ const FRONTIER_SLOTS: ModelSlot[] = [
     vendor: 'codex',
     providerName: 'cli-codex',
     modelEnvVars: ['CLI_CODEX_DEFAULT_MODEL'],
-    pinned: 'gpt-5.6-sol',
-    pinnedContextTokens: 1_050_000,
+    pinned: 'gpt-6.1-sol',
+    pinnedContextTokens: 272_000,
   },
 ];
 
+/**
+ * The auto preset seats whichever of Claude Code and Codex are installed. `found` lists the
+ * vendor commands on PATH; with none the preset has no providers and a run reports how to install one.
+ */
+export function autoPreset(found: readonly string[]): CouncilPreset {
+  const vendors = AUTO_VENDORS.filter((vendor) => found.includes(vendor.command));
+  const commands = vendors.map((vendor) => vendor.command);
+  return {
+    name: DEFAULT_PRESET,
+    summary:
+      'Claude Code and Codex, whichever are installed, with their default models. Used when no preset or provider is configured.',
+    providers: vendors.map((vendor) => vendor.provider),
+    minProviders: Math.min(2, vendors.length),
+    requiredCommands: commands,
+    scouts: commands,
+    environment: ({ execPath, shimPath, timeoutMs, environment }) => {
+      const values: Record<string, string | undefined> = {
+        CLI_CLAUDE_ENABLED: commands.includes('claude') ? 'true' : undefined,
+        CLI_CODEX_ENABLED: commands.includes('codex') ? 'true' : undefined,
+      };
+      for (const vendor of commands) {
+        Object.assign(
+          values,
+          scoutProfileEnvironment(vendor, { execPath, shimPath, timeoutMs, environment })
+        );
+      }
+      return values;
+    },
+  };
+}
+
 export const PRESETS: readonly CouncilPreset[] = [
+  autoPreset(AUTO_VENDORS.map((vendor) => vendor.command)),
   {
     name: 'frontier',
     summary:
-      'Grok (xhigh reasoning), Gemini via AGY (high effort), Claude Code, and Codex (xhigh reasoning); all four required; the newest model per vendor is selected automatically unless the model policy is pinned; prompts delivered through stdin so the shared packet is not capped by argument length',
+      'Grok, Gemini (through AGY), Claude Code, and Codex at high reasoning effort. All four CLIs are required. The newest model per vendor is chosen automatically unless the model policy is pinned.',
     providers: ['cli-grok', 'cli-agy', 'cli-claude', 'cli-codex'],
     minProviders: 4,
     requiredCommands: ['agy', 'claude', 'codex', 'grok'],
@@ -127,10 +175,10 @@ export const PRESETS: readonly CouncilPreset[] = [
     modelSlots: FRONTIER_SLOTS,
     scouts: ['claude', 'codex', 'grok'],
     environment: ({ execPath, shimPath, timeoutMs, models, environment }) => {
-      const grok = models.grok?.id ?? 'grok-4.6';
-      const agy = models.agy?.id ?? 'gemini-3.8-flash-high';
-      const claude = models.claude?.id ?? 'claude-fable-5[1m]';
-      const codex = models.codex?.id ?? 'gpt-5.6-sol';
+      const grok = models.grok.id;
+      const agy = models.agy.id;
+      const claude = models.claude.id;
+      const codex = models.codex.id;
       const scout = (vendor: ScoutVendor, model: string, reasoningEffort?: string) =>
         scoutProfileEnvironment(vendor, {
           execPath,
@@ -204,7 +252,7 @@ export const PRESETS: readonly CouncilPreset[] = [
   {
     name: 'quick',
     summary:
-      'Claude Code and Codex with their default models; a fast two-provider council for smoke tests',
+      'Claude Code and Codex with their default models. A fast two-provider council for smoke tests.',
     providers: ['cli-claude', 'cli-codex'],
     minProviders: 2,
     requiredCommands: ['claude', 'codex'],
@@ -218,7 +266,17 @@ export const PRESETS: readonly CouncilPreset[] = [
   },
 ];
 
-export function findPreset(name: string): CouncilPreset {
+/**
+ * The preset called `name`. `auto` is built from the vendor CLIs `locate` finds, so callers that
+ * can see the person's PATH pass their own lookup.
+ */
+export function findPreset(
+  name: string,
+  locate: (command: string) => string | undefined = (command) => findCommand(command)
+): CouncilPreset {
+  if (name === DEFAULT_PRESET) {
+    return autoPreset(AUTO_VENDORS.map((vendor) => vendor.command).filter((c) => locate(c)));
+  }
   const preset = PRESETS.find((candidate) => candidate.name === name);
   if (!preset) {
     throw new Error(
@@ -283,7 +341,7 @@ export function modelsByProvider(
   return byProvider;
 }
 
-/** `grok=grok-4.6 (auto: latest of 2) · codex=gpt-5.6-sol (pinned)`. */
+/** `grok=grok-4.7 (auto: latest of 4) · codex=gpt-6.1-sol (pinned)`. */
 export function describeModels(
   preset: CouncilPreset,
   models: Record<string, ResolvedModel>
@@ -354,6 +412,28 @@ export function missingPresetCommands(
   return preset.requiredCommands.filter((command) => !locate(command));
 }
 
+/** Variables Rubber Duck reads to enable a provider; any of them means the person configured one. */
+const PROVIDER_VARIABLE_PATTERN =
+  /^(CLI_[A-Z0-9_]+_ENABLED|CLI_CUSTOM_[A-Z0-9_]+_COMMAND|CUSTOM_[A-Z0-9_]+_API_KEY|OPENAI_API_KEY|GEMINI_API_KEY|GROQ_API_KEY|ENABLE_OLLAMA|OLLAMA_BASE_URL)$/;
+
+/**
+ * True when the person configured at least one Rubber Duck provider themselves, through its
+ * environment variables or its config file, so the auto preset must stay out of the way.
+ */
+export function providersConfigured(
+  environment: NodeJS.ProcessEnv,
+  homeDirectory: string | undefined
+): boolean {
+  const configured = Object.entries(environment).some(
+    ([key, value]) => PROVIDER_VARIABLE_PATTERN.test(key) && value?.trim()
+  );
+  if (configured) return true;
+  return (
+    homeDirectory !== undefined &&
+    existsSync(join(homeDirectory, '.mcp-rubber-duck', 'config.json'))
+  );
+}
+
 export function presetsText(): string {
   const width = Math.max(...PRESETS.map((preset) => preset.name.length));
   const indent = ' '.repeat(width);
@@ -362,7 +442,7 @@ export function presetsText(): string {
     ...PRESETS.map((preset) => {
       const lines = [
         `  ${preset.name.padEnd(width)}  ${preset.summary}`,
-        `  ${indent}  providers: ${preset.providers.join(', ')}; requires: ${preset.requiredCommands.join(', ')}`,
+        `  ${indent}  providers: ${preset.providers.join(', ')}; requires: ${preset.requiredCommands.join(', ')}${preset.name === DEFAULT_PRESET ? ' (whichever are installed)' : ''}`,
       ];
       if (preset.scouts?.length) {
         lines.push(

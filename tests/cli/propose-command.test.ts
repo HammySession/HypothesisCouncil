@@ -262,7 +262,7 @@ describe('hc propose', () => {
     });
     expect(existsSync(record.logPath!)).toBe(true);
     expect(existsSync(record.resultPath!)).toBe(true);
-    expect(handoffCtx.io.text()).toContain('Handoff: X-003 → fake (completed)');
+    expect(handoffCtx.io.text()).toContain('Handoff: X-003 -> fake (completed)');
 
     // A dirty repository blocks --run unless --allow-dirty is given.
     const dirtyCtx = createTestContext({
